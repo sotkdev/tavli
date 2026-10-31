@@ -1,4 +1,4 @@
-// Greek Tavli Online — UI, Auth, Modals, 3-Mode Custom Audio & Board Renderer (ui.js — v19)
+// Greek Tavli Online — UI, Auth, Modals, Global Messaging, 3-Mode Custom Audio & Board Renderer (ui.js — v20)
 
 function t() {
   return I18N[myLang] || I18N.en;
@@ -12,9 +12,61 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+function escapeJsStr(str) {
+  return String(str || "")
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/"/g, "&quot;");
+}
+
 function setStatus(msg) {
   const el = document.getElementById("statusLog");
   if (el) el.textContent = msg;
+}
+
+// Dynamically positions the Tutorial Coach Panel:
+// - Desktop (>= 960px): inside .side-column where the Chat Box was (next to the board)
+// - Mobile (< 960px): inside .main-column right above the board (where it originally was)
+// Also hides the Chat Box completely whenever isTutorialMode is active.
+function syncTutorialPanelPlacement() {
+  const tutPanel = document.getElementById("tutorialCoachPanel");
+  const mainCol = document.getElementById("mainColumn") || document.querySelector(".main-column");
+  const sideCol = document.getElementById("sideColumn") || document.querySelector(".side-column");
+  const fevgaWarn = document.getElementById("fevgaPrimeWarning");
+  const adminBtn = document.getElementById("btnAdminPanel");
+
+  document.body.classList.toggle("tutorial-mode", Boolean(isTutorialMode));
+
+  if (!tutPanel || !mainCol || !sideCol) return;
+
+  if (!isTutorialMode) {
+    tutPanel.style.display = "none";
+    if (tutPanel.parentElement !== mainCol && fevgaWarn) {
+      mainCol.insertBefore(tutPanel, fevgaWarn);
+    }
+    return;
+  }
+
+  tutPanel.style.display = "flex";
+  if (window.innerWidth >= 960) {
+    // Desktop: put Tutorial in the Side Column where Chat was
+    if (tutPanel.parentElement !== sideCol) {
+      if (adminBtn && adminBtn.parentElement === sideCol) {
+        sideCol.insertBefore(tutPanel, adminBtn);
+      } else {
+        sideCol.appendChild(tutPanel);
+      }
+    }
+  } else {
+    // Mobile: keep Tutorial in the Main Column above the board
+    if (tutPanel.parentElement !== mainCol) {
+      if (fevgaWarn && fevgaWarn.parentElement === mainCol) {
+        mainCol.insertBefore(tutPanel, fevgaWarn);
+      } else {
+        mainCol.insertBefore(tutPanel, mainCol.children[1] || null);
+      }
+    }
+  }
 }
 
 // Switches between the Standalone Landing Hub and the Active Gameplay Board
@@ -26,13 +78,17 @@ function showScreen(screenName) {
     gameApp.classList.add("active-game");
     gameApp.style.display = window.innerWidth >= 960 ? "grid" : "flex";
     document.body.classList.add("in-game-mode");
+    syncTutorialPanelPlacement();
+    updateUnreadMessageBadges();
     render();
   } else {
     gameApp.classList.remove("active-game");
     gameApp.style.display = "none";
     document.body.classList.remove("in-game-mode");
+    document.body.classList.remove("tutorial-mode");
     landing.style.display = "flex";
     checkPersistentLoginSession();
+    updateUnreadMessageBadges();
   }
 }
 
@@ -40,6 +96,7 @@ window.addEventListener("resize", () => {
   const gameApp = document.getElementById("gameAppLayout");
   if (gameApp && gameApp.classList.contains("active-game")) {
     gameApp.style.display = window.innerWidth >= 960 ? "grid" : "flex";
+    syncTutorialPanelPlacement();
   }
 });
 
@@ -93,7 +150,6 @@ function selectModalGuestStore(enable) {
   }
 }
 
-// Toggle between Join as Player and Watch as Spectator inside the Join/Invite modal
 function selectJoinParticipationMode(mode) {
   modalRole = (mode === "SPECTATE") ? "SPECTATE" : "JOIN";
   const tr = t();
@@ -156,7 +212,20 @@ function updateAdminButtonVisibility() {
   if (btn2) btn2.style.display = isAdmin ? "flex" : "none";
 }
 
-// Persistent Login Session check — Never drops logged-in name even before Firebase finishes pulling!
+function updateUnreadMessageBadges() {
+  const count = isAuthenticatedAccount ? window.TavliDB.getUnreadCount(myPlayerName) : 0;
+  const bLanding = document.getElementById("unreadBadgeLanding");
+  const bGame = document.getElementById("unreadBadgeGame");
+  if (bLanding) {
+    bLanding.textContent = String(count);
+    bLanding.style.display = count > 0 ? "inline-block" : "none";
+  }
+  if (bGame) {
+    bGame.textContent = String(count);
+    bGame.style.display = count > 0 ? "inline-block" : "none";
+  }
+}
+
 function checkPersistentLoginSession() {
   const savedName = localStorage.getItem("tavli_logged_in_name");
   const savedPinHash = localStorage.getItem("tavli_logged_in_pinhash");
@@ -180,6 +249,7 @@ function checkPersistentLoginSession() {
       hintEl.textContent = tr.verifiedBadge(myPlayerName);
       hintEl.style.color = "#00e676";
       updateAdminButtonVisibility();
+      updateUnreadMessageBadges();
       return;
     }
   }
@@ -190,6 +260,7 @@ function checkPersistentLoginSession() {
   document.getElementById("btnVerifyIdentity").style.display = "inline-block";
   document.getElementById("btnLogoutIdentity").style.display = "none";
   updateAdminButtonVisibility();
+  updateUnreadMessageBadges();
 }
 
 async function verifyIdentityOnLanding(showSuccessHint = false) {
@@ -238,6 +309,7 @@ async function verifyIdentityOnLanding(showSuccessHint = false) {
   localStorage.setItem("tavli_player_name", myPlayerName);
   document.getElementById("authErrorBox").style.display = "none";
   updateAdminButtonVisibility();
+  updateUnreadMessageBadges();
   updateHeaderLabels();
   return true;
 }
@@ -269,6 +341,8 @@ function applyLanguageToUI() {
 
   document.getElementById("hubBtnProfile").textContent = tr.btnProfile;
   document.getElementById("hubBtnLeaderboard").textContent = tr.btnLeaderboard;
+  const hubMsgEl = document.getElementById("hubBtnMessages");
+  if (hubMsgEl) hubMsgEl.textContent = tr.btnMessages;
   document.getElementById("hubBtnSettings").textContent = tr.btnSettings;
   document.getElementById("lblLandingAdmin").textContent = tr.btnAdmin;
   document.getElementById("hubArtCaption").textContent = tr.hubArtCaption;
@@ -336,10 +410,17 @@ function applyLanguageToUI() {
 
   document.getElementById("lblBtnProfile").textContent = tr.btnProfile;
   document.getElementById("lblBtnLeaderboard").textContent = tr.btnLeaderboard;
+  const gameMsgEl = document.getElementById("lblBtnMessages");
+  if (gameMsgEl) gameMsgEl.textContent = tr.btnMessages;
   document.getElementById("lblBtnSettings").textContent = tr.btnSettings;
   document.getElementById("lblBtnAdmin").textContent = tr.btnAdmin;
   document.getElementById("profModalTitle").textContent = tr.profTitle;
   document.getElementById("lbModalTitle").textContent = tr.lbTitle;
+  const msgTitleEl = document.getElementById("msgModalTitle");
+  if (msgTitleEl) msgTitleEl.textContent = tr.msgModalTitle;
+  const msgCloseEl = document.getElementById("msgCloseBtn");
+  if (msgCloseEl) msgCloseEl.textContent = tr.closeBtn;
+
   document.getElementById("settingsModalTitle").textContent = tr.settingsTitle;
   document.getElementById("lblSettingsTheme").textContent = tr.lblSettingsTheme;
   document.getElementById("thNameClassic").textContent = tr.thClassic;
@@ -448,18 +529,34 @@ function getSequenceForMode(mode) {
   return ["PORTES", "PLAKOTO", "FEVGA"];
 }
 
-// --- Profile, Leaderboard, Settings & Sotiris Admin Modals ---
-async function openProfileModal() {
-  if (!isAuthenticatedAccount && myStoreDetailsPref) {
+// ============================================================================
+// CLICKABLE PLAYER PROFILES & GLOBAL PLAYER MESSAGING SYSTEM (v20)
+// ============================================================================
+async function openProfileModal(targetPlayerName = null) {
+  if (!targetPlayerName && !isAuthenticatedAccount && myStoreDetailsPref) {
     await verifyIdentityOnLanding(false);
   }
-  renderProfileModalContent();
+  inspectedProfileName = targetPlayerName ? String(targetPlayerName).trim() : myPlayerName;
+  renderProfileModalContent(inspectedProfileName);
   document.getElementById("profileModal").style.display = "flex";
   await window.TavliDB.pullFromServer();
-  renderProfileModalContent();
+  renderProfileModalContent(inspectedProfileName);
 }
+
 function closeProfileModal() {
   document.getElementById("profileModal").style.display = "none";
+}
+
+function openPlayerProfileFromLink(playerName) {
+  if (!playerName) return;
+  closeLeaderboardModal();
+  openProfileModal(playerName);
+}
+
+function openMessageToPlayerFromProfile(targetName) {
+  if (!targetName) return;
+  closeProfileModal();
+  openMessagesModal(targetName);
 }
 
 async function openSettingsModal() {
@@ -473,16 +570,28 @@ function closeSettingsModal() {
   document.getElementById("settingsModal").style.display = "none";
 }
 
-function renderProfileModalContent() {
+function renderProfileModalContent(targetNameOverride = null) {
   const container = document.getElementById("profileContent");
   const tr = t();
-  const user = window.TavliDB.getUser(myPlayerName);
+  const targetName = targetNameOverride || inspectedProfileName || myPlayerName;
+  const isViewingSelf = window.TavliDB.normalizeKey(targetName) === window.TavliDB.normalizeKey(myPlayerName);
+  const user = window.TavliDB.getUser(targetName);
 
-  if (!user || !isAuthenticatedAccount) {
-    container.innerHTML = `
-      <div class="profile-name-header">👤 ${escapeHtml(myPlayerName)}</div>
-      <p style="font-size:0.85rem; color:#ffecb3; text-align:center; padding:12px;">${tr.profGuestMsg}</p>
-    `;
+  if (!user) {
+    if (isViewingSelf && !isAuthenticatedAccount) {
+      container.innerHTML = `
+        <div class="profile-name-header"><span>👤 ${escapeHtml(myPlayerName)}</span></div>
+        <p style="font-size:0.85rem; color:#ffecb3; text-align:center; padding:12px;">${tr.profGuestMsg}</p>
+      `;
+    } else {
+      container.innerHTML = `
+        <div class="profile-name-header">
+          <span>👤 ${escapeHtml(targetName)}</span>
+          ${!isViewingSelf ? `<button class="btn-sm" onclick="openProfileModal()">${tr.profBackToMyProfile}</button>` : ""}
+        </div>
+        <p style="font-size:0.85rem; color:#ffecb3; text-align:center; padding:12px;">${escapeHtml(tr.profNotFoundMsg(targetName))}</p>
+      `;
+    }
     return;
   }
 
@@ -495,7 +604,7 @@ function renderProfileModalContent() {
   const gamesL = s.gamesLost || 0;
   const gamesTot = gamesW + gamesL;
 
-  const rankInfo = window.TavliDB.getPlayerRank(myPlayerName);
+  const rankInfo = window.TavliDB.getPlayerRank(user.name);
   const rankStr = rankInfo ? `#${rankInfo.rank} / ${rankInfo.total}` : "-";
 
   const calcRate = (won, played) => played > 0 ? `${Math.round((won / played) * 100)}% (${won}/${played})` : `0% (0/0)`;
@@ -503,15 +612,16 @@ function renderProfileModalContent() {
   const vPlakoto = (s.variants && s.variants.PLAKOTO) || { played: 0, won: 0 };
   const vFevga = (s.variants && s.variants.FEVGA) || { played: 0, won: 0 };
 
-  const topOpps = window.TavliDB.getTopOpponents(myPlayerName, 3);
+  const topOpps = window.TavliDB.getTopOpponents(user.name, 3);
   let oppRowsHtml = "";
   if (topOpps.length === 0) {
     oppRowsHtml = `<tr><td colspan="3" style="text-align:center; color:#90a4ae;">${tr.profNoOpp}</td></tr>`;
   } else {
     topOpps.forEach(o => {
+      const safeOppJs = escapeJsStr(o.displayName);
       oppRowsHtml += `
         <tr>
-          <td><strong>${escapeHtml(o.displayName)}</strong></td>
+          <td><span class="player-link" onclick="openPlayerProfileFromLink('${safeOppJs}')">👤 ${escapeHtml(o.displayName)}</span></td>
           <td><span style="color:#00e676;font-weight:bold;">${o.gamesWon}W</span> / <span style="color:#ff8a80;font-weight:bold;">${o.gamesLost}L</span> (${o.gamesPlayed})</td>
           <td><span style="color:#00e676;font-weight:bold;">${o.setsWon}W</span> / <span style="color:#ff8a80;font-weight:bold;">${o.setsLost}L</span> (${o.setsPlayed})</td>
         </tr>
@@ -519,8 +629,19 @@ function renderProfileModalContent() {
     });
   }
 
+  const safeTargetJs = escapeJsStr(user.name);
+  const headerActionsHtml = !isViewingSelf
+    ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
+         <button class="btn-sm" style="background:var(--valid); color:#111; padding:6px 11px;" onclick="openMessageToPlayerFromProfile('${safeTargetJs}')">${escapeHtml(tr.profSendMsgBtn(user.name))}</button>
+         <button class="btn-sm" style="background:#546e7a; color:#fff; padding:6px 10px;" onclick="openProfileModal()">${escapeHtml(tr.profBackToMyProfile)}</button>
+       </div>`
+    : `<button class="btn-sm" style="background:#00897b; color:#fff; padding:6px 11px;" onclick="closeProfileModal(); openMessagesModal();">💬 ${escapeHtml(tr.btnMessages)}</button>`;
+
   container.innerHTML = `
-    <div class="profile-name-header">👤 ${escapeHtml(user.name)}</div>
+    <div class="profile-name-header">
+      <span>👤 ${escapeHtml(user.name)}</span>
+      ${headerActionsHtml}
+    </div>
 
     <div class="stat-grid">
       <div class="stat-box">
@@ -564,7 +685,211 @@ function renderProfileModalContent() {
       </thead>
       <tbody>${oppRowsHtml}</tbody>
     </table>
+    <div style="font-size:0.72rem; color:#ffecb3; text-align:center; margin-top:4px;">${escapeHtml(tr.profClickHint)}</div>
   `;
+}
+
+// --- Global Player Messages Modal (Accessible from All Screens) ---
+async function openMessagesModal(initialPartnerName = null) {
+  if (!isAuthenticatedAccount && myStoreDetailsPref) {
+    await verifyIdentityOnLanding(false);
+  }
+  if (initialPartnerName) {
+    activeMessagePartner = String(initialPartnerName).trim();
+    if (isAuthenticatedAccount) {
+      window.TavliDB.markConversationRead(myPlayerName, activeMessagePartner);
+    }
+  }
+  renderMessagesModalContent();
+  document.getElementById("messagesModal").style.display = "flex";
+  updateUnreadMessageBadges();
+
+  await window.TavliDB.pullFromServer();
+  if (activeMessagePartner && isAuthenticatedAccount) {
+    window.TavliDB.markConversationRead(myPlayerName, activeMessagePartner);
+  }
+  renderMessagesModalContent();
+  updateUnreadMessageBadges();
+}
+
+function closeMessagesModal() {
+  document.getElementById("messagesModal").style.display = "none";
+  updateUnreadMessageBadges();
+}
+
+function selectMessageThread(partnerName) {
+  if (!partnerName) return;
+  activeMessagePartner = String(partnerName).trim();
+  if (isAuthenticatedAccount) {
+    window.TavliDB.markConversationRead(myPlayerName, activeMessagePartner);
+  }
+  renderMessagesModalContent();
+  updateUnreadMessageBadges();
+}
+
+function startNewMessageThreadFromDropdown() {
+  const sel = document.getElementById("msgNewRecipientSelect");
+  if (!sel || !sel.value) return;
+  selectMessageThread(sel.value);
+}
+
+function formatMessageTime(ts) {
+  if (!ts) return "";
+  try {
+    const d = new Date(ts);
+    const now = new Date();
+    const sameDay = d.toDateString() === now.toDateString();
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    if (sameDay) return `${hh}:${mm}`;
+    return `${d.getDate()}/${d.getMonth() + 1} ${hh}:${mm}`;
+  } catch (_) {
+    return "";
+  }
+}
+
+async function handleSendDirectMessage() {
+  const input = document.getElementById("directMsgInput");
+  if (!input || !activeMessagePartner || !isAuthenticatedAccount) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+
+  const res = await window.TavliDB.sendMessageAsync(myPlayerName, activeMessagePartner, text);
+  if (res.ok) {
+    playChatSound();
+    if (typeof syncDatabaseWithPeer === "function") {
+      syncDatabaseWithPeer();
+    }
+    renderMessagesModalContent();
+    updateUnreadMessageBadges();
+  }
+}
+
+function renderMessagesModalContent() {
+  const container = document.getElementById("messagesModalBody");
+  if (!container) return;
+  const tr = t();
+
+  if (!isAuthenticatedAccount) {
+    container.innerHTML = `
+      <p style="font-size:0.86rem; color:#ffecb3; text-align:center; padding:18px;">
+        ${escapeHtml(tr.msgLoginReq)}
+      </p>
+    `;
+    return;
+  }
+
+  const myKey = window.TavliDB.normalizeKey(myPlayerName);
+  const threads = window.TavliDB.getConversationThreads(myPlayerName);
+
+  // If no partner is selected yet, default to the most recent conversation thread
+  if (!activeMessagePartner && threads.length > 0) {
+    activeMessagePartner = threads[0].partnerName;
+    window.TavliDB.markConversationRead(myPlayerName, activeMessagePartner);
+  }
+
+  const activePartnerKey = window.TavliDB.normalizeKey(activeMessagePartner);
+  const allUsers = window.TavliDB.getAllUsers().filter(u => window.TavliDB.normalizeKey(u.name) !== myKey);
+
+  let recipientOptions = `<option value="">${escapeHtml(tr.msgNewRecipientPh)}</option>`;
+  allUsers.forEach(u => {
+    recipientOptions += `<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)}</option>`;
+  });
+
+  let threadsListHtml = "";
+  if (threads.length === 0) {
+    threadsListHtml = `<div style="font-size:0.75rem; color:#90a4ae; padding:8px; text-align:center;">${escapeHtml(tr.msgNoThreads)}</div>`;
+  } else {
+    threads.forEach(th => {
+      const isAct = (th.partnerKey === activePartnerKey);
+      const safePartnerJs = escapeJsStr(th.partnerName);
+      const unreadPill = th.unreadCount > 0
+        ? `<span style="background:#e53935; color:#fff; border-radius:999px; padding:1px 6px; font-size:0.65rem; font-weight:900;">${th.unreadCount}</span>`
+        : "";
+      threadsListHtml += `
+        <div class="msg-thread-item ${isAct ? "active" : ""}" onclick="selectMessageThread('${safePartnerJs}')">
+          <div class="msg-thread-top">
+            <span>👤 ${escapeHtml(th.partnerName)}</span>
+            ${unreadPill}
+          </div>
+          <div class="msg-thread-preview">${escapeHtml(th.lastMsg.text)}</div>
+        </div>
+      `;
+    });
+  }
+
+  let rightPaneHtml = "";
+  if (!activeMessagePartner) {
+    rightPaneHtml = `
+      <div style="margin:auto; text-align:center; color:#90a4ae; font-size:0.82rem; padding:16px;">
+        ${escapeHtml(tr.msgSelectPrompt)}
+      </div>
+    `;
+  } else {
+    const partnerUser = window.TavliDB.getUser(activeMessagePartner);
+    const displayPartnerName = partnerUser ? partnerUser.name : activeMessagePartner;
+    const safePartnerJs = escapeJsStr(displayPartnerName);
+
+    const allMyMsgs = window.TavliDB.getMessagesForUser(myPlayerName);
+    const convMsgs = allMyMsgs.filter(m =>
+      (m.fromKey === myKey && m.toKey === activePartnerKey) ||
+      (m.fromKey === activePartnerKey && m.toKey === myKey)
+    );
+
+    let bubblesHtml = "";
+    if (convMsgs.length === 0) {
+      bubblesHtml = `<div style="margin:auto; text-align:center; color:#90a4ae; font-size:0.78rem;">👋 ${escapeHtml(tr.msgChattingWith(displayPartnerName))}</div>`;
+    } else {
+      convMsgs.forEach(m => {
+        const isSent = (m.fromKey === myKey);
+        bubblesHtml += `
+          <div class="msg-bubble ${isSent ? "sent" : "received"}">
+            <div>${escapeHtml(m.text)}</div>
+            <div class="msg-bubble-meta">${escapeHtml(formatMessageTime(m.ts))}</div>
+          </div>
+        `;
+      });
+    }
+
+    rightPaneHtml = `
+      <div class="msg-chat-header">
+        <span>💬 ${escapeHtml(tr.msgChattingWith(displayPartnerName))}</span>
+        <button class="btn-sm" style="padding:4px 8px; font-size:0.72rem;" onclick="closeMessagesModal(); openProfileModal('${safePartnerJs}');">${escapeHtml(tr.msgViewProfBtn)}</button>
+      </div>
+      <div class="msg-chat-history" id="directMsgHistoryBox">${bubblesHtml}</div>
+      <div class="chat-input-row" style="margin-top:6px;">
+        <input type="text" id="directMsgInput" placeholder="${escapeHtml(tr.msgInputPlaceholder)}" maxlength="240" onkeydown="if(event.key==='Enter') handleSendDirectMessage()" />
+        <button onclick="handleSendDirectMessage()">${escapeHtml(tr.msgSendBtn)}</button>
+      </div>
+    `;
+  }
+
+  container.innerHTML = `
+    <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+      <select id="msgNewRecipientSelect" style="flex:1; padding:7px 10px; border-radius:7px; border:1px solid var(--wood-mid); background:#141414; color:#fff; font-size:0.82rem;">
+        ${recipientOptions}
+      </select>
+      <button class="btn-sm" style="padding:7px 12px;" onclick="startNewMessageThreadFromDropdown()">+ ${escapeHtml(tr.msgStartChatBtn)}</button>
+    </div>
+
+    <div class="msg-layout">
+      <div class="msg-threads-col">
+        <div style="font-size:0.75rem; font-weight:bold; color:#ffecb3; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:4px;">
+          ${escapeHtml(tr.msgConversationsHdr)}
+        </div>
+        ${threadsListHtml}
+      </div>
+      <div class="msg-chat-col">
+        ${rightPaneHtml}
+      </div>
+    </div>
+  `;
+
+  const histBox = document.getElementById("directMsgHistoryBox");
+  if (histBox) {
+    histBox.scrollTop = histBox.scrollHeight;
+  }
 }
 
 function renderSettingsAccountSection(feedbackMsg = "") {
@@ -665,10 +990,11 @@ function renderLeaderboardModalContent() {
   pageItems.forEach(item => {
     const isMe = window.TavliDB.normalizeKey(item.name) === window.TavliDB.normalizeKey(myPlayerName);
     const rowStyle = isMe ? "background:rgba(255,179,0,0.16); font-weight:bold;" : "";
+    const safeNameJs = escapeJsStr(item.name);
     rowsHtml += `
       <tr style="${rowStyle}">
         <td>#${item.rank}</td>
-        <td>${escapeHtml(item.name)}</td>
+        <td><span class="player-link" onclick="openPlayerProfileFromLink('${safeNameJs}')">👤 ${escapeHtml(item.name)}</span></td>
         <td>${item.setsWon} / ${item.setsPlayed}</td>
         <td>${item.gamesWon} / ${item.gamesPlayed}</td>
         <td style="color:var(--accent); font-weight:bold;">${Math.round(item.overallWinRate)}%</td>
@@ -1058,11 +1384,9 @@ function playCheckerClack(mode = "MOVE") {
   };
 
   if (soundType === "HIT") {
-    // 1. Portes Blot Hit: Loud, sharp high-impact double-clack knock
     triggerWoodTap(0, 260, 72, 0.68, 1850);
     triggerWoodTap(0.055, 330, 90, 0.78, 2250);
   } else if (soundType === "PIN") {
-    // 2. Plakoto Checker Pin/Capture: Deep, heavy locking double-thud + low slide
     triggerWoodTap(0, 175, 48, 0.65, 1050);
     triggerWoodTap(0.075, 130, 38, 0.80, 760);
 
@@ -1078,7 +1402,6 @@ function playCheckerClack(mode = "MOVE") {
     lockOsc.start(now + 0.05);
     lockOsc.stop(now + 0.23);
   } else {
-    // 3. Normal Move to Open Point: Crisp single wooden tap
     triggerWoodTap(0, 195, 58, 0.42, 1450);
   }
 }

@@ -306,29 +306,64 @@
     }
     .hub-secondary-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 8px;
       margin-top: 2px;
     }
+    @media (max-width: 480px) {
+      .hub-secondary-grid { grid-template-columns: repeat(2, 1fr); }
+    }
     .hub-btn-sec {
-      padding: 10px 8px;
+      padding: 10px 6px;
       border-radius: 10px;
       border: 1px solid var(--wood-mid);
       background: rgba(0,0,0,0.35);
       color: #ffecb3;
       font-weight: 800;
-      font-size: 0.82rem;
+      font-size: 0.8rem;
       cursor: pointer;
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 4px;
       transition: all 0.15s ease;
+      position: relative;
     }
     .hub-btn-sec:hover {
       border-color: var(--accent);
       background: rgba(255,255,255,0.1);
       color: #fff;
+    }
+
+    /* Unread Message Red Badge */
+    .unread-badge {
+      background: #e53935;
+      color: #fff;
+      font-size: 0.65rem;
+      font-weight: 900;
+      padding: 1px 6px;
+      border-radius: 999px;
+      border: 1px solid #fff;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.5);
+      display: none;
+    }
+    .hub-btn-sec .unread-badge {
+      position: absolute;
+      top: 5px;
+      right: 6px;
+    }
+
+    /* Clickable Player Link in Leaderboard & Profile */
+    .player-link {
+      color: var(--accent);
+      font-weight: 800;
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      transition: filter 0.15s ease;
+    }
+    .player-link:hover {
+      filter: brightness(1.25);
     }
 
     /* Designed Backgammon Artwork Card */
@@ -395,6 +430,11 @@
       flex-shrink: 0;
     }
 
+    /* In Learning Mode, hide the Chat Box completely */
+    body.tutorial-mode #gameChatBox {
+      display: none !important;
+    }
+
     @media (min-width: 960px) {
       body.in-game-mode { overflow: hidden; }
       .app-layout.active-game {
@@ -413,7 +453,7 @@
         width: clamp(360px, min(700px, calc(100vw - 520px), calc((100dvh - 140px) * 4 / 3)), 720px);
       }
       .side-column {
-        width: clamp(250px, 24vw, 330px);
+        width: clamp(255px, 25vw, 340px);
         height: min(calc(100dvh - 24px), 570px);
         max-height: min(calc(100dvh - 24px), 570px);
         min-height: 0;
@@ -431,9 +471,19 @@
         height: 0 !important;
         max-height: none !important;
       }
+      /* When Tutorial Panel is docked inside .side-column on Desktop, fill the chat slot cleanly */
+      .side-column .tutorial-coach-panel {
+        flex: 1 1 0;
+        min-height: 0;
+        overflow-y: auto;
+        margin-bottom: 0;
+        justify-content: flex-start;
+        gap: 10px;
+        padding: 12px;
+      }
     }
 
-    /* Interactive Tutorial Coach Panel (Shown on Board During "Learn to Play" Mode) */
+    /* Interactive Tutorial Coach Panel (Shown on Board in Mobile, or in Side Column in Desktop) */
     .tutorial-coach-panel {
       width: 100%;
       background: linear-gradient(135deg, #1a237e, #283593);
@@ -501,7 +551,7 @@
     }
     .tut-lesson-body {
       font-size: 0.78rem;
-      line-height: 1.35;
+      line-height: 1.38;
       color: #fff;
     }
     .tut-tip-box {
@@ -542,10 +592,128 @@
     .btn-primary-start { background: var(--accent); color: #111; }
     .btn-back-cancel { background: #546e7a; color: #fff; }
 
-    /* Profile, Leaderboard & Settings Top Buttons Above Chat */
-    .side-top-btns { display: flex; gap: 5px; width: 100%; flex-shrink: 0; }
-    .side-top-btns button { flex: 1; padding: 7px 6px; border-radius: 8px; border: 1px solid var(--wood-mid); background: var(--wood-dark); color: #ffecb3; font-weight: bold; font-size: 0.75rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; box-shadow: 0 2px 6px rgba(0,0,0,0.4); }
+    /* Profile, Leaderboard, Messages & Settings Top Buttons Above Chat */
+    .side-top-btns { display: flex; gap: 4px; width: 100%; flex-shrink: 0; }
+    .side-top-btns button { flex: 1; padding: 7px 4px; border-radius: 8px; border: 1px solid var(--wood-mid); background: var(--wood-dark); color: #ffecb3; font-weight: bold; font-size: 0.71rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 3px; box-shadow: 0 2px 6px rgba(0,0,0,0.4); white-space: nowrap; }
     .side-top-btns button:hover { filter: brightness(1.15); border-color: var(--accent); }
+
+    /* Global Messaging Modal Layout */
+    .msg-layout {
+      display: grid;
+      grid-template-columns: 210px 1fr;
+      gap: 10px;
+      height: 360px;
+      margin-top: 8px;
+    }
+    @media (max-width: 600px) {
+      .msg-layout {
+        grid-template-columns: 1fr;
+        height: auto;
+      }
+    }
+    .msg-threads-col {
+      background: rgba(0,0,0,0.32);
+      border: 1px solid var(--wood-mid);
+      border-radius: 8px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      max-height: 360px;
+    }
+    .msg-thread-item {
+      padding: 8px 10px;
+      border-radius: 7px;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid transparent;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      transition: all 0.14s ease;
+    }
+    .msg-thread-item:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: var(--wood-mid);
+    }
+    .msg-thread-item.active {
+      background: rgba(255,179,0,0.18);
+      border-color: var(--accent);
+    }
+    .msg-thread-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+      font-weight: 800;
+      color: var(--accent);
+    }
+    .msg-thread-preview {
+      font-size: 0.72rem;
+      color: #cfd8dc;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .msg-chat-col {
+      background: rgba(0,0,0,0.32);
+      border: 1px solid var(--wood-mid);
+      border-radius: 8px;
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-height: 280px;
+      max-height: 360px;
+    }
+    .msg-chat-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+      padding-bottom: 6px;
+      margin-bottom: 6px;
+      font-size: 0.84rem;
+      font-weight: 800;
+      color: #ffecb3;
+    }
+    .msg-chat-history {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 4px;
+      user-select: text;
+    }
+    .msg-bubble {
+      max-width: 82%;
+      padding: 7px 10px;
+      border-radius: 10px;
+      font-size: 0.78rem;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .msg-bubble.sent {
+      align-self: flex-end;
+      background: var(--accent);
+      color: #111;
+      font-weight: 600;
+      border-bottom-right-radius: 2px;
+    }
+    .msg-bubble.received {
+      align-self: flex-start;
+      background: rgba(255,255,255,0.14);
+      color: #fff;
+      border-bottom-left-radius: 2px;
+    }
+    .msg-bubble-meta {
+      font-size: 0.62rem;
+      opacity: 0.75;
+      margin-top: 2px;
+      text-align: right;
+    }
 
     /* Sotiris Admin Button */
     .admin-btn-under-chat {
@@ -585,6 +753,11 @@
       color: var(--accent);
       margin-bottom: 10px;
       letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 8px;
     }
 
     /* Profile, Leaderboard, Admin Tables & 10-Per-Page Pagination Bar */
@@ -771,7 +944,6 @@
     .pip { width: 7px; height: 7px; background: #1b1b1b; border-radius: 50%; align-self: center; justify-self: center; box-shadow: inset 0 1px 1px rgba(0,0,0,0.6); }
     .die.tumbling { animation: tumbleDie 0.55s cubic-bezier(0.22, 0.61, 0.36, 1); }
 
-    /* Outer border of the white die matches the active turn player's checker colour */
     .die.die-border-white  { border-color: #ffffff; box-shadow: 0 0 0 2px #222, 0 6px 14px rgba(0,0,0,0.65); }
     .die.die-border-black  { border-color: #111111; box-shadow: 0 0 0 2px #ffb300, 0 6px 14px rgba(0,0,0,0.75); }
     .die.die-border-blue   { border-color: #1e88e5; box-shadow: 0 0 10px rgba(30,136,229,0.75), 0 6px 14px rgba(0,0,0,0.65); }
@@ -873,6 +1045,11 @@
               <span style="font-size:1.25rem;">🏆</span>
               <span id="hubBtnLeaderboard">Leaderboard</span>
             </button>
+            <button class="hub-btn-sec" onclick="openMessagesModal()">
+              <span style="font-size:1.25rem;">💬</span>
+              <span id="hubBtnMessages">Messages</span>
+              <span class="unread-badge" id="unreadBadgeLanding">0</span>
+            </button>
             <button class="hub-btn-sec" onclick="openSettingsModal()">
               <span style="font-size:1.25rem;">⚙️</span>
               <span id="hubBtnSettings">Settings</span>
@@ -951,7 +1128,6 @@
     <div class="modal-card">
       <h2 id="playConfigTitle">Host a Game</h2>
 
-      <!-- Shown ONLY when a player opens an Invite Link (?room=XXXXXX) and is NOT already logged in -->
       <div id="inviteGuestAuthSection" style="display:none; background:rgba(0,0,0,0.28); border:1px solid var(--wood-mid); border-radius:8px; padding:10px; margin-bottom:8px;">
         <label class="sec-label" id="lblModalGuestName" style="margin-top:0;">Your Name</label>
         <input type="text" id="modalGuestNameInput" placeholder="Enter your name" maxlength="16" style="margin-bottom:6px;" />
@@ -963,7 +1139,6 @@
         <div class="auth-error" id="modalAuthErrorBox"></div>
       </div>
 
-      <!-- Join Mode Role Selector: Play vs Watch as Spectator -->
       <div id="joinRoleToggleSection" style="display:none; margin-bottom:6px;">
         <label class="sec-label" id="lblJoinModeType">Participation Mode</label>
         <div class="toggle-row">
@@ -972,13 +1147,11 @@
         </div>
       </div>
 
-      <!-- Checker Colour Section (Hidden when joining as Spectator) -->
       <div id="checkerColorSection">
         <label class="sec-label" id="lblCheckerColor">Your Checker Colour</label>
         <div class="color-grid" id="colorGrid"></div>
       </div>
 
-      <!-- AI-Only Difficulty Options -->
       <div id="aiOnlySettings" style="display:none;">
         <label class="sec-label" id="lblAiDiff">AI Difficulty</label>
         <div class="toggle-row">
@@ -988,13 +1161,11 @@
         </div>
       </div>
 
-      <!-- Join / Spectate Room Code Input -->
       <div id="joinOnlySettings" style="display:none;">
         <label class="sec-label" id="lblRoomCode" for="modalRoomInput">Room Code (Join, Reconnect, or Watch)</label>
         <input type="text" id="modalRoomInput" placeholder="6-CHAR CODE" maxlength="6" style="text-transform:uppercase; letter-spacing:2px; font-weight:bold;" onkeydown="if(event.key==='Enter') confirmStartSelectedMode()" />
       </div>
 
-      <!-- Host & AI Match Settings -->
       <div id="hostOnlySettings">
         <label class="sec-label" id="lblGameSel">Game Selection</label>
         <div class="toggle-row">
@@ -1027,7 +1198,7 @@
     </div>
   </div>
 
-  <!-- 2. Profile Pop-Up Modal -->
+  <!-- 2. Profile Pop-Up Modal (Supports Inspecting Any Player's Profile & Messaging Them) -->
   <div class="modal-overlay" id="profileModal" style="display:none;">
     <div class="modal-card wide-modal">
       <h2 id="profModalTitle">Player Profile</h2>
@@ -1043,6 +1214,15 @@
       <div id="lbSyncStatus" style="font-size:0.74rem; color:#81c784; text-align:center; margin-bottom:6px;">🌐 Live Server Synced</div>
       <div id="leaderboardContent"></div>
       <button class="modal-close-btn" id="lbCloseBtn" onclick="closeLeaderboardModal()">Back / Close</button>
+    </div>
+  </div>
+
+  <!-- 3b. Global Player Messages Pop-Up Modal (Accessible from All Screens) -->
+  <div class="modal-overlay" id="messagesModal" style="display:none;">
+    <div class="modal-card xl-modal" style="max-width:700px;">
+      <h2 id="msgModalTitle">💬 Global Player Messages</h2>
+      <div id="messagesModalBody"></div>
+      <button class="modal-close-btn" id="msgCloseBtn" onclick="closeMessagesModal()">Back / Close</button>
     </div>
   </div>
 
@@ -1171,7 +1351,7 @@
   <div class="app-layout" id="gameAppLayout">
     <div class="left-spacer"></div>
 
-    <div class="main-column">
+    <div class="main-column" id="mainColumn">
       <!-- Online P2P, Spectator Count, Reconnect Countdown & Audio Bar -->
       <div class="net-bar" id="netBar">
         <div style="display:flex; align-items:center; flex-wrap:wrap;">
@@ -1186,7 +1366,7 @@
         </div>
       </div>
 
-      <!-- INTERACTIVE TUTORIAL COACH PANEL (Visible Only in "Learn to Play" Mode) -->
+      <!-- INTERACTIVE TUTORIAL COACH PANEL (Stays here in Mobile; Moves into .side-column replacing Chat in Desktop) -->
       <div class="tutorial-coach-panel" id="tutorialCoachPanel">
         <div class="tut-top-row">
           <div class="tut-variant-tabs">
@@ -1221,7 +1401,7 @@
         <div class="score-box"><span id="colorLabelB">Black</span> (<span id="nameB">Player 2</span>)<br><span class="score-num" id="scoreB">0</span> / <span id="targetB">7</span></div>
       </div>
 
-      <!-- Game Board (All Dice Roll Inside Left & Right Board Zones with Player-Colored Borders) -->
+      <!-- Game Board -->
       <div class="board-wrap">
         <div class="half-board">
           <div class="row top" id="top-left"></div>
@@ -1261,15 +1441,16 @@
       </div>
     </div>
 
-    <!-- Chat Column with Profile, Leaderboard & Settings on Top, and Sotiris Admin Button Underneath -->
-    <div class="side-column">
+    <!-- Side Column with Profile, Leaderboard, Messages & Settings on Top, Chat / Desktop Tutorial in Middle, and Sotiris Admin Underneath -->
+    <div class="side-column" id="sideColumn">
       <div class="side-top-btns">
         <button id="btnOpenProfile" onclick="openProfileModal()">👤 <span id="lblBtnProfile">Profile</span></button>
         <button id="btnOpenLeaderboard" onclick="openLeaderboardModal()">🏆 <span id="lblBtnLeaderboard">Leaderboard</span></button>
+        <button id="btnOpenMessages" onclick="openMessagesModal()">💬 <span id="lblBtnMessages">Messages</span> <span class="unread-badge" id="unreadBadgeGame">0</span></button>
         <button id="btnOpenSettings" onclick="openSettingsModal()">⚙️ <span id="lblBtnSettings">Settings</span></button>
       </div>
 
-      <div class="chat-box">
+      <div class="chat-box" id="gameChatBox">
         <div class="chat-messages" id="chatMessages">
           <div class="chat-line"><span class="chat-sender" id="welcomeSender" style="color:#81c784;">System:</span><span id="welcomeMsg"> Welcome! Throw a die to see who plays first.</span></div>
         </div>
@@ -1288,7 +1469,7 @@
   </div>
 
   <!-- Small Version Label at Bottom-Right -->
-  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v19</div>
+  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v20</div>
 
   <script src="i18n.js"></script>
   <script src="tutorial.js"></script>

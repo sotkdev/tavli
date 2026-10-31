@@ -1,4 +1,4 @@
-// Greek Tavli Online — Interactive Learn-to-Play Engine & Scenarios (tutorial.js — v19)
+// Greek Tavli Online — Interactive Learn-to-Play Engine & Scenarios (tutorial.js — v20)
 
 let tutVariant = "PORTES";
 let tutStepIdx = 0;
@@ -284,11 +284,13 @@ function startInteractiveTutorial() {
   state.autoRoll = false;
 
   document.getElementById("shareBtn").style.display = "none";
-  document.getElementById("tutorialCoachPanel").style.display = "flex";
   document.getElementById("netStatus").textContent = t().netTutorialMode;
   updateSpectatorBadge(0);
 
   showScreen("GAME");
+  if (typeof syncTutorialPanelPlacement === "function") {
+    syncTutorialPanelPlacement();
+  }
   loadTutorialScenario();
 }
 

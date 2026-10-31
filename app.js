@@ -1,4 +1,4 @@
-// Greek Tavli Online — Core Game Engine, Fevga Rules, AI, Spectator Handshake Fix, Tutorial & WebRTC Multiplayer (app.js — v19)
+// Greek Tavli Online — Core Game Engine, Fevga Rules, AI, Spectator Handshake Fix, Tutorial, Global Messaging & WebRTC Multiplayer (app.js — v20)
 
 const PEER_CONFIG = {
   config: {
@@ -151,8 +151,9 @@ async function confirmStartSelectedMode() {
   ensureAudio();
   const tr = t();
   isTutorialMode = false;
-  const tutPanel = document.getElementById("tutorialCoachPanel");
-  if (tutPanel) tutPanel.style.display = "none";
+  if (typeof syncTutorialPanelPlacement === "function") {
+    syncTutorialPanelPlacement();
+  }
 
   checkPersistentLoginSession();
 
@@ -1096,7 +1097,6 @@ function executeMoveSequence(steps, onSequenceDone = null) {
     state.lastAction = soundAction;
     state.lastMoveAnim = { from: startOrigin, to: finalDest, player };
 
-    // If in Interactive Tutorial Mode, check if the player solved the lesson!
     if (isTutorialMode) {
       render();
       if (typeof checkTutorialStepCompletion === "function") {
@@ -1491,8 +1491,9 @@ function handleExitToInitialMenu(notifyPeer = true) {
   stopDisconnectCountdown();
   clearActiveRoomBackup();
   isTutorialMode = false;
-  const tutPanel = document.getElementById("tutorialCoachPanel");
-  if (tutPanel) tutPanel.style.display = "none";
+  if (typeof syncTutorialPanelPlacement === "function") {
+    syncTutorialPanelPlacement();
+  }
 
   document.getElementById("setSummaryModal").style.display = "none";
   document.getElementById("playConfigModal").style.display = "none";
@@ -1609,7 +1610,7 @@ function awardForfeitSetWinToConnectedPlayer() {
 }
 
 // ============================================================================
-// WEBRTC MULTIPLAYER & RELIABLE SPECTATOR HANDSHAKE RELAY HUB (v19 FIX)
+// WEBRTC MULTIPLAYER & RELIABLE SPECTATOR HANDSHAKE RELAY HUB (v20)
 // ============================================================================
 function safeSend(targetConn, payload) {
   if (!targetConn) return;
@@ -1649,6 +1650,9 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
   stopDisconnectCountdown();
   isAiMatch = false;
   isTutorialMode = false;
+  if (typeof syncTutorialPanelPlacement === "function") {
+    syncTutorialPanelPlacement();
+  }
   spectatorConns = [];
   const code = reconnectingCode || generateSecureRoomCode();
   activeRoomCode = code;
@@ -1701,6 +1705,9 @@ function joinRoomWithCode(rawCode, asSpectator = false) {
   stopHelloRetry();
   isAiMatch = false;
   isTutorialMode = false;
+  if (typeof syncTutorialPanelPlacement === "function") {
+    syncTutorialPanelPlacement();
+  }
   spectatorConns = [];
   const code = String(rawCode || "").trim().toUpperCase();
   if (code.length !== 6) return alert(t().enter6CodeAlert);
@@ -1814,7 +1821,6 @@ function syncDatabaseWithPeer() {
   }
 }
 
-// Host-side connection handler: handles both immediate metadata & HELLO packets so Spectators never get stuck on "Connecting..."
 function setupIncomingHostConn(incomingConn, code) {
   const registerSpectatorAndSendAck = (rawName) => {
     const cleanName = String(rawName || "Spectator").trim().slice(0, 16) || "Spectator";
@@ -1845,7 +1851,6 @@ function setupIncomingHostConn(incomingConn, code) {
     }
   };
 
-  // Proactively acknowledge spectators as soon as the WebRTC DataChannel opens using PeerJS connection metadata
   incomingConn.on("open", () => {
     if (incomingConn.metadata && incomingConn.metadata.role === "SPECTATOR") {
       registerSpectatorAndSendAck(incomingConn.metadata.name);
@@ -1869,7 +1874,6 @@ function setupIncomingHostConn(incomingConn, code) {
         return;
       }
 
-      // Otherwise, this is our Opponent ('B')
       const alreadyInitializedOpponent = (incomingConn === conn && incomingConn._ackSent);
       incomingConn._isSpectator = false;
       incomingConn._ackSent = true;
@@ -1968,7 +1972,6 @@ function setupIncomingHostConn(incomingConn, code) {
   });
 }
 
-// Client-side connection handler with automatic 1.2s Handshake Retry Loop until HELLO_ACK arrives
 function setupClientConn(code, asSpectator = false, isReconnectingAttempt = false) {
   let receivedAck = false;
 
@@ -2050,7 +2053,6 @@ function setupClientConn(code, asSpectator = false, isReconnectingAttempt = fals
       return;
     }
 
-    // If a STATE packet arrives before HELLO_ACK, also mark connection as acknowledged
     if (packet.type === "STATE") {
       receivedAck = true;
       stopHelloRetry();
@@ -2128,6 +2130,13 @@ function handleCommonPacketOnPeer(packet, sourceConn) {
       }
       updateHeaderLabels();
       render();
+    }
+    if (typeof updateUnreadMessageBadges === "function") {
+      updateUnreadMessageBadges();
+    }
+    const msgModal = document.getElementById("messagesModal");
+    if (msgModal && msgModal.style.display === "flex" && typeof renderMessagesModalContent === "function") {
+      renderMessagesModalContent();
     }
     if (myRole === "W") {
       broadcastFromHostToAll(packet, sourceConn);
@@ -2393,13 +2402,27 @@ window.addEventListener("DOMContentLoaded", () => {
   window.TavliDB.onRemoteUpdate(() => {
     checkPersistentLoginSession();
     handleNameInputCheck();
+    if (typeof updateUnreadMessageBadges === "function") {
+      updateUnreadMessageBadges();
+    }
     if (document.getElementById("leaderboardModal").style.display === "flex") {
       renderLeaderboardModalContent();
     }
     if (document.getElementById("profileModal").style.display === "flex") {
       renderProfileModalContent();
     }
+    const msgModal = document.getElementById("messagesModal");
+    if (msgModal && msgModal.style.display === "flex" && typeof renderMessagesModalContent === "function") {
+      renderMessagesModalContent();
+    }
   });
+
+  // Periodically pull from Firebase every 20 seconds so new Global Messages & Unread Badges update automatically
+  setInterval(() => {
+    if (window.TavliDB && typeof window.TavliDB.pullFromServer === "function") {
+      window.TavliDB.pullFromServer();
+    }
+  }, 20000);
 
   const savedTheme = localStorage.getItem("tavli_theme");
   if (savedTheme) selectTheme(savedTheme);

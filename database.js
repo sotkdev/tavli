@@ -1,4 +1,4 @@
-// Greek Tavli Online — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing (database.js)
+// Greek Tavli Online — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing & Global Messaging (database.js — v20)
 // Always points to: https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json
 
 const TAVLI_DB_STORAGE_KEY = "tavli_players_database_v1";
@@ -9,9 +9,10 @@ const TAVLI_HASH_SALT      = "GreekTavli_SHA256_Salt_2026_v2";
 const DEFAULT_CLOUD_ENDPOINT = "https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json";
 
 const INITIAL_TAVLI_DATABASE = {
-  version: 2,
+  version: 3,
   lastUpdated: Date.now(),
-  users: {}
+  users: {},
+  messages: []
 };
 
 window.TavliDB = {
@@ -21,7 +22,6 @@ window.TavliDB = {
   onRemoteUpdateCallbacks: [],
 
   init() {
-    // Always enforce the Firebase Realtime Database endpoint unless a valid custom Firebase URL was explicitly set
     const savedUrl = localStorage.getItem(TAVLI_CLOUD_URL_KEY);
     if (
       savedUrl &&
@@ -42,6 +42,9 @@ window.TavliDB = {
         if (!this.data || typeof this.data.users !== "object") {
           this.data = JSON.parse(JSON.stringify(INITIAL_TAVLI_DATABASE));
         }
+        if (!Array.isArray(this.data.messages)) {
+          this.data.messages = [];
+        }
       } catch (e) {
         this.data = JSON.parse(JSON.stringify(INITIAL_TAVLI_DATABASE));
       }
@@ -52,14 +55,13 @@ window.TavliDB = {
 
     this.sanitizeAllStatsConsistency();
     this.migrateLegacyPlaintextPins();
-    // Immediately sync with Firebase on startup
     this.pullFromServer();
     return this.data;
   },
 
-  // Ensures all user & opponent records have consistent Won + Lost = Played integers
   sanitizeAllStatsConsistency() {
     if (!this.data || !this.data.users) return;
+    if (!Array.isArray(this.data.messages)) this.data.messages = [];
     Object.values(this.data.users).forEach(u => {
       if (!u || !u.stats) return;
       const s = u.stats;
@@ -90,7 +92,6 @@ window.TavliDB = {
     });
   },
 
-  // Salted SHA-256 One-Way Hash so plaintext PINs are NEVER stored in Firebase
   async hashPin(name, pin) {
     const normName = this.normalizeKey(name);
     const cleanPin = String(pin || "").trim();
@@ -246,6 +247,40 @@ window.TavliDB = {
     return false;
   },
 
+  mergeMessagesList(remoteMessages) {
+    if (!Array.isArray(remoteMessages)) return;
+    if (!this.data) this.init();
+    if (!Array.isArray(this.data.messages)) this.data.messages = [];
+
+    const byId = new Map();
+    this.data.messages.forEach(m => {
+      if (m && m.id) byId.set(m.id, m);
+    });
+
+    remoteMessages.forEach(rm => {
+      if (!rm || !rm.id || !rm.from || !rm.to || !rm.text) return;
+      const existing = byId.get(rm.id);
+      if (!existing) {
+        byId.set(rm.id, {
+          id: String(rm.id),
+          from: String(rm.from),
+          fromKey: this.normalizeKey(rm.fromKey || rm.from),
+          to: String(rm.to),
+          toKey: this.normalizeKey(rm.toKey || rm.to),
+          text: String(rm.text).slice(0, 240),
+          ts: Number(rm.ts) || Date.now(),
+          read: Boolean(rm.read)
+        });
+      } else if (rm.read && !existing.read) {
+        existing.read = true;
+      }
+    });
+
+    const merged = Array.from(byId.values()).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    // Keep up to 400 recent messages so the DB stays lightweight
+    this.data.messages = merged.slice(-400);
+  },
+
   async mergeFullDatabase(remoteDB, saveToLocal = true) {
     if (!remoteDB || typeof remoteDB.users !== "object") return;
     if (!this.data) this.init();
@@ -294,6 +329,10 @@ window.TavliDB = {
           locUser.updatedAt = Math.max(remTime, locTime);
         }
       }
+    }
+
+    if (Array.isArray(remoteDB.messages)) {
+      this.mergeMessagesList(remoteDB.messages);
     }
 
     if (saveToLocal) this.saveLocalOnly();
@@ -443,6 +482,13 @@ window.TavliDB = {
           delete other.stats.opponents[oldKey];
         }
       });
+
+      if (Array.isArray(this.data.messages)) {
+        this.data.messages.forEach(m => {
+          if (m.fromKey === oldKey) { m.fromKey = newKey; m.from = cleanNewName; }
+          if (m.toKey === oldKey) { m.toKey = newKey; m.to = cleanNewName; }
+        });
+      }
     }
 
     await this.save(true);
@@ -634,6 +680,114 @@ window.TavliDB = {
     this.save();
   },
 
+  // --- Global Player-to-Player Messaging System (v20) ---
+  async sendMessageAsync(fromName, toName, rawText) {
+    if (!this.data) this.init();
+    if (!Array.isArray(this.data.messages)) this.data.messages = [];
+
+    const cleanFrom = String(fromName || "").trim();
+    const cleanTo = String(toName || "").trim();
+    const cleanText = String(rawText || "").trim().slice(0, 240);
+
+    if (!cleanFrom || !cleanTo || !cleanText) {
+      return { ok: false, message: "Invalid message." };
+    }
+
+    const fromUser = this.getUser(cleanFrom);
+    const toUser = this.getUser(cleanTo);
+
+    const msgObj = {
+      id: "MSG-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
+      from: fromUser ? fromUser.name : cleanFrom,
+      fromKey: this.normalizeKey(cleanFrom),
+      to: toUser ? toUser.name : cleanTo,
+      toKey: this.normalizeKey(cleanTo),
+      text: cleanText,
+      ts: Date.now(),
+      read: false
+    };
+
+    this.data.messages.push(msgObj);
+    if (this.data.messages.length > 400) {
+      this.data.messages = this.data.messages.slice(-400);
+    }
+
+    await this.save();
+    return { ok: true, msg: msgObj };
+  },
+
+  getMessagesForUser(userName) {
+    if (!this.data) this.init();
+    if (!Array.isArray(this.data.messages)) return [];
+    const myKey = this.normalizeKey(userName);
+    if (!myKey) return [];
+    return this.data.messages
+      .filter(m => m && (m.fromKey === myKey || m.toKey === myKey))
+      .sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  },
+
+  getConversationThreads(userName) {
+    const myKey = this.normalizeKey(userName);
+    if (!myKey) return [];
+    const all = this.getMessagesForUser(userName);
+    const map = new Map();
+
+    all.forEach(m => {
+      const isIncoming = (m.toKey === myKey);
+      const partnerKey = isIncoming ? m.fromKey : m.toKey;
+      const partnerName = isIncoming ? m.from : m.to;
+      if (!partnerKey) return;
+
+      if (!map.has(partnerKey)) {
+        const regUser = this.getUser(partnerKey);
+        map.set(partnerKey, {
+          partnerKey,
+          partnerName: regUser ? regUser.name : partnerName,
+          lastMsg: m,
+          unreadCount: 0,
+          messages: []
+        });
+      }
+      const thread = map.get(partnerKey);
+      thread.lastMsg = m;
+      thread.messages.push(m);
+      if (isIncoming && !m.read) {
+        thread.unreadCount += 1;
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => (b.lastMsg.ts || 0) - (a.lastMsg.ts || 0));
+  },
+
+  getUnreadCount(userName) {
+    if (!this.data) this.init();
+    if (!Array.isArray(this.data.messages)) return 0;
+    const myKey = this.normalizeKey(userName);
+    if (!myKey) return 0;
+    return this.data.messages.filter(m => m && m.toKey === myKey && !m.read).length;
+  },
+
+  markConversationRead(myName, partnerName) {
+    if (!this.data) this.init();
+    if (!Array.isArray(this.data.messages)) return false;
+    const myKey = this.normalizeKey(myName);
+    const pKey = this.normalizeKey(partnerName);
+    if (!myKey || !pKey) return false;
+
+    let changed = false;
+    this.data.messages.forEach(m => {
+      if (m && m.toKey === myKey && m.fromKey === pKey && !m.read) {
+        m.read = true;
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      this.save();
+    }
+    return changed;
+  },
+
   getLeaderboard() {
     if (!this.data) this.init();
     const list = Object.values(this.data.users).map(u => {
@@ -708,7 +862,10 @@ window.TavliDB = {
         stats: u.stats
       };
     });
-    return snapshot;
+    return {
+      users: snapshot,
+      messages: Array.isArray(this.data.messages) ? this.data.messages.slice(-200) : []
+    };
   },
 
   mergePublicSnapshot(remoteSnapshot) {
@@ -716,7 +873,8 @@ window.TavliDB = {
     if (!this.data) this.init();
     let changed = false;
 
-    Object.entries(remoteSnapshot).forEach(([k, remUser]) => {
+    const usersMap = remoteSnapshot.users || remoteSnapshot;
+    Object.entries(usersMap).forEach(([k, remUser]) => {
       if (!remUser || !remUser.name || !remUser.stats) return;
       const localUser = this.data.users[k];
       if (!localUser) {
@@ -742,6 +900,12 @@ window.TavliDB = {
       }
     });
 
+    if (Array.isArray(remoteSnapshot.messages)) {
+      const beforeLen = (this.data.messages || []).length;
+      this.mergeMessagesList(remoteSnapshot.messages);
+      if ((this.data.messages || []).length !== beforeLen) changed = true;
+    }
+
     if (changed) this.save();
   },
 
@@ -765,6 +929,7 @@ window.TavliDB = {
         return { ok: false, message: "Invalid database file structure." };
       }
       this.data = parsed;
+      if (!Array.isArray(this.data.messages)) this.data.messages = [];
       this.sanitizeAllStatsConsistency();
       await this.migrateLegacyPlaintextPins();
       await this.save(true);
