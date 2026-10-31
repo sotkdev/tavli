@@ -1,4 +1,4 @@
-// Greek Tavli Online — Bilingual Dictionary & Global Constants (i18n.js — v20)
+// Greek Tavli Online — Bilingual Dictionary, V21 Settings State & Global Constants (i18n.js — v21)
 
 let myLang = "en";
 let myTheme = "classic";
@@ -6,6 +6,19 @@ const ALL_THEMES = ["classic", "blue", "green", "white", "amethyst", "terracotta
 const PAGE_SIZE = 10;
 const ROOM_BACKUP_KEY = "tavli_active_room_backup_v1";
 const RECONNECT_WINDOW_MS = 5 * 60 * 1000;
+
+// --- Version 21: 5 New Board & Gameplay Settings State ---
+let myPipIndexMode = localStorage.getItem("tavli_v21_pip_index") || "RELATIVE";   // 'OFF' | 'ABSOLUTE' | 'RELATIVE'
+let myPipCountDisplay = localStorage.getItem("tavli_v21_pip_count") !== "OFF";    // true | false
+let myMoveIndicatorMode = localStorage.getItem("tavli_v21_move_ind") || "BADGES"; // 'BADGES' | 'GLOW'
+let myAnimSpeed = localStorage.getItem("tavli_v21_anim_speed") || "NORMAL";       // 'INSTANT' | 'NORMAL' | 'SMOOTH'
+let myBoardTexture = localStorage.getItem("tavli_v21_board_tex") || "WOOD";       // 'GLOSS' | 'MATTE' | 'WOOD'
+
+const ANIM_SPEED_CONFIG = {
+  INSTANT: { checkerMs: 0,   diceMs: 0   },
+  NORMAL:  { checkerMs: 275, diceMs: 550 },
+  SMOOTH:  { checkerMs: 480, diceMs: 800 }
+};
 
 let lbCurrentPage = 1;
 let adminCurrentPage = 1;
@@ -149,6 +162,26 @@ const I18N = {
     thTerracotta: "Sunset Terracotta",
     thMidnight: "Midnight Gold",
     thSakura: "Sakura Blossom",
+    // Version 21 Settings Strings
+    lblPipIndex: "1. Point Numbers Toggle (Pip Index)",
+    optPipOff: "Hidden",
+    optPipAbs: "Standard (1–24)",
+    optPipRel: "Relative to Active Player",
+    lblPipCounter: "2. Real-Time Pip Count Display",
+    optPipCountOn: "Show Pip Counter",
+    optPipCountOff: "Hide Pip Counter",
+    lblMoveIndicators: "3. Legal Move Target Indicators",
+    optIndBadges: "Green Distance Badges",
+    optIndGlow: "Simple Outline Glow",
+    lblAnimSpeed: "4. Checker & Dice Animation Speed",
+    optSpeedInstant: "Instant",
+    optSpeedNormal: "Normal",
+    optSpeedSmooth: "Smooth Flight",
+    lblBoardTexture: "5. Board Texture Style",
+    optTexGloss: "Gloss Inlay",
+    optTexMatte: "Matte Felt",
+    optTexWood: "Rustic Wood",
+    pipCountText: count => `${count} pips`,
     closeBtn: "Back / Close",
     profGuestMsg: "You are currently playing as a Guest. Enable 'Store Details (PIN)' on the main menu to track stats!",
     profNotFoundMsg: name => `No registered profile found for "${name}".`,
@@ -343,6 +376,26 @@ const I18N = {
     thTerracotta: "Τερακότα Ηλιοβασιλέματος",
     thMidnight: "Μεσάνυχτα & Χρυσός",
     thSakura: "Άνθη Κερασιάς",
+    // Version 21 Settings Strings (Greek)
+    lblPipIndex: "1. Αρίθμηση Θέσεων Ταμπλό (1–24)",
+    optPipOff: "Κρυφή",
+    optPipAbs: "Σταθερή (1–24)",
+    optPipRel: "Σχετική με τον Ενεργό Παίκτη",
+    lblPipCounter: "2. Μετρητής Pips σε Πραγματικό Χρόνο",
+    optPipCountOn: "Εμφάνιση Pips",
+    optPipCountOff: "Απόκρυψη Pips",
+    lblMoveIndicators: "3. Ένδειξη Νόμιμων Κινήσεων",
+    optIndBadges: "Πράσινα Σήματα Απόστασης",
+    optIndGlow: "Απλό Φωτεινό Περίγραμμα",
+    lblAnimSpeed: "4. Ταχύτητα Κίνησης Πουλιών & Ζαριών",
+    optSpeedInstant: "Ακαριαία",
+    optSpeedNormal: "Κανονική",
+    optSpeedSmooth: "Ομαλή Πτήση",
+    lblBoardTexture: "5. Υφή Επιφάνειας Ταμπλό",
+    optTexGloss: "Γυαλιστερό Ένθετο",
+    optTexMatte: "Ματ Τσόχα",
+    optTexWood: "Ρουστίκ Ξύλο",
+    pipCountText: count => `${count} pips`,
     closeBtn: "Πίσω / Κλείσιμο",
     profGuestMsg: "Παίζετε ως Επισκέπτης. Ενεργοποιήστε την Αποθήκευση (PIN) στο αρχικό μενού για καταγραφή στατιστικών!",
     profNotFoundMsg: name => `Δεν βρέθηκε εγγεγραμμένο προφίλ για "${name}".`,

@@ -1,4 +1,4 @@
-// Greek Tavli Online — Core Game Engine, Fevga Rules, AI, Spectator Handshake Fix, Tutorial, Global Messaging & WebRTC Multiplayer (app.js — v20)
+// Greek Tavli Online — Core Game Engine, Fevga Rules, AI, Spectator Handshake Fix, Tutorial, Global Messaging, V21 Animation Speeds & WebRTC Multiplayer (app.js — v21)
 
 const PEER_CONFIG = {
   config: {
@@ -72,6 +72,13 @@ let helloRetryTimer = null;  // Handshake retry loop for reliable Spectator & Jo
 
 let packetQueue = [];
 let isProcessingPacket = false;
+
+function getActiveAnimTiming() {
+  if (typeof ANIM_SPEED_CONFIG !== "undefined" && ANIM_SPEED_CONFIG[myAnimSpeed]) {
+    return ANIM_SPEED_CONFIG[myAnimSpeed];
+  }
+  return { checkerMs: 275, diceMs: 550 };
+}
 
 function stopHelloRetry() {
   if (helloRetryTimer) {
@@ -848,10 +855,19 @@ function playAiTurnSequence() {
   runNextAiStep();
 }
 
-// --- Animations & Board Interaction ---
+// --- Animations & Board Interaction (Updated in v21 for Instant / Normal / Smooth Speeds) ---
 function animateBoardRollOffDie(side, onComplete) {
-  isAnimatingDice = true;
+  const { diceMs } = getActiveAnimTiming();
   playDiceRattle();
+
+  if (diceMs <= 0) {
+    isAnimatingDice = false;
+    render();
+    if (onComplete) onComplete();
+    return;
+  }
+
+  isAnimatingDice = true;
   const leftZone = document.getElementById("rollOffLeftZone");
   const rightZone = document.getElementById("rollOffRightZone");
 
@@ -873,7 +889,7 @@ function animateBoardRollOffDie(side, onComplete) {
     isAnimatingDice = false;
     render();
     if (onComplete) onComplete();
-  }, 550);
+  }, diceMs);
 }
 
 function resolveRollOffOutcome() {
@@ -916,8 +932,17 @@ function resolveRollOffOutcome() {
 }
 
 function animateDiceRoll(numDice = 2, onComplete) {
-  isAnimatingDice = true;
+  const { diceMs } = getActiveAnimTiming();
   playDiceRattle();
+
+  if (diceMs <= 0) {
+    isAnimatingDice = false;
+    render();
+    if (onComplete) onComplete();
+    return;
+  }
+
+  isAnimatingDice = true;
   const leftZone = document.getElementById("rollOffLeftZone");
   const rightZone = document.getElementById("rollOffRightZone");
   const activePlayer = state.turn;
@@ -934,10 +959,17 @@ function animateDiceRoll(numDice = 2, onComplete) {
     isAnimatingDice = false;
     render();
     if (onComplete) onComplete();
-  }, 550);
+  }, diceMs);
 }
 
 function animateCheckerTransition(fromLoc, toLoc, player, onComplete) {
+  const { checkerMs } = getActiveAnimTiming();
+  if (checkerMs <= 0) {
+    isAnimatingChecker = false;
+    if (onComplete) onComplete();
+    return;
+  }
+
   const srcEl = getSlotOrPointElement(fromLoc, player);
   const dstEl = getSlotOrPointElement(toLoc, player);
   if (!srcEl || !dstEl) {
@@ -969,6 +1001,7 @@ function animateCheckerTransition(fromLoc, toLoc, player, onComplete) {
   flyer.style.height = `${size}px`;
   flyer.style.left = `${startX}px`;
   flyer.style.top = `${startY}px`;
+  flyer.style.transition = `left ${checkerMs}ms cubic-bezier(0.22, 0.61, 0.36, 1), top ${checkerMs}ms cubic-bezier(0.22, 0.61, 0.36, 1), transform ${checkerMs}ms ease`;
 
   if (startTarget !== srcEl) {
     const originCount = fromLoc === "BAR"
@@ -993,7 +1026,7 @@ function animateCheckerTransition(fromLoc, toLoc, player, onComplete) {
     flyer.remove();
     isAnimatingChecker = false;
     if (onComplete) onComplete();
-  }, 275);
+  }, checkerMs);
 }
 
 function getSlotOrPointElement(loc, player) {
@@ -1610,7 +1643,7 @@ function awardForfeitSetWinToConnectedPlayer() {
 }
 
 // ============================================================================
-// WEBRTC MULTIPLAYER & RELIABLE SPECTATOR HANDSHAKE RELAY HUB (v20)
+// WEBRTC MULTIPLAYER & RELIABLE SPECTATOR HANDSHAKE RELAY HUB (v20 / v21)
 // ============================================================================
 function safeSend(targetConn, payload) {
   if (!targetConn) return;
@@ -2469,6 +2502,10 @@ window.addEventListener("DOMContentLoaded", () => {
   const recentBackup = getActiveRoomBackup();
   if (recentBackup && recentBackup.roomCode) {
     document.getElementById("modalRoomInput").value = recentBackup.roomCode;
+  }
+
+  if (typeof applyV21SettingsToDOM === "function") {
+    applyV21SettingsToDOM();
   }
 
   checkPersistentLoginSession();

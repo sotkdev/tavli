@@ -1,4 +1,4 @@
-// Greek Tavli Online — UI, Auth, Modals, Global Messaging, 3-Mode Custom Audio & Board Renderer (ui.js — v20)
+// Greek Tavli Online — UI, Auth, Modals, Global Messaging, V21 Settings, 3-Mode Custom Audio & Board Renderer (ui.js — v21)
 
 function t() {
   return I18N[myLang] || I18N.en;
@@ -22,6 +22,119 @@ function escapeJsStr(str) {
 function setStatus(msg) {
   const el = document.getElementById("statusLog");
   if (el) el.textContent = msg;
+}
+
+// ============================================================================
+// VERSION 21: 5 NEW BOARD & GAMEPLAY SETTINGS HANDLERS
+// ============================================================================
+function setActiveToggleOpt(id, isActive) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle("active", Boolean(isActive));
+}
+
+function applyV21SettingsToDOM() {
+  const b = document.body;
+  if (!b) return;
+
+  // 1. Point Numbers Toggle (Pip Index)
+  b.classList.toggle("pip-index-off", myPipIndexMode === "OFF");
+  setActiveToggleOpt("btnPipOff", myPipIndexMode === "OFF");
+  setActiveToggleOpt("btnPipAbs", myPipIndexMode === "ABSOLUTE");
+  setActiveToggleOpt("btnPipRel", myPipIndexMode === "RELATIVE");
+
+  // 2. Real-Time Pip Count Display
+  b.classList.toggle("pip-count-off", !myPipCountDisplay);
+  setActiveToggleOpt("btnPipCountOn", myPipCountDisplay === true);
+  setActiveToggleOpt("btnPipCountOff", myPipCountDisplay === false);
+
+  // 3. Legal Move Target Indicators
+  b.classList.remove("move-ind-badges", "move-ind-glow");
+  b.classList.add(myMoveIndicatorMode === "GLOW" ? "move-ind-glow" : "move-ind-badges");
+  setActiveToggleOpt("btnIndBadges", myMoveIndicatorMode === "BADGES");
+  setActiveToggleOpt("btnIndGlow", myMoveIndicatorMode === "GLOW");
+
+  // 4. Checker & Dice Animation Speed
+  setActiveToggleOpt("btnSpeedInstant", myAnimSpeed === "INSTANT");
+  setActiveToggleOpt("btnSpeedNormal", myAnimSpeed === "NORMAL");
+  setActiveToggleOpt("btnSpeedSmooth", myAnimSpeed === "SMOOTH");
+
+  // 5. Board Texture Style
+  b.classList.remove("board-tex-gloss", "board-tex-matte", "board-tex-wood");
+  const texSuffix = (myBoardTexture || "WOOD").toLowerCase();
+  b.classList.add(`board-tex-${texSuffix}`);
+  setActiveToggleOpt("btnTexGloss", myBoardTexture === "GLOSS");
+  setActiveToggleOpt("btnTexMatte", myBoardTexture === "MATTE");
+  setActiveToggleOpt("btnTexWood", myBoardTexture === "WOOD");
+}
+
+function setPipIndexMode(mode) {
+  myPipIndexMode = (mode === "OFF" || mode === "ABSOLUTE" || mode === "RELATIVE") ? mode : "RELATIVE";
+  localStorage.setItem("tavli_v21_pip_index", myPipIndexMode);
+  applyV21SettingsToDOM();
+  render();
+}
+
+function setPipCountDisplay(enabled) {
+  myPipCountDisplay = Boolean(enabled);
+  localStorage.setItem("tavli_v21_pip_count", myPipCountDisplay ? "ON" : "OFF");
+  applyV21SettingsToDOM();
+  render();
+}
+
+function setMoveIndicatorMode(mode) {
+  myMoveIndicatorMode = (mode === "GLOW") ? "GLOW" : "BADGES";
+  localStorage.setItem("tavli_v21_move_ind", myMoveIndicatorMode);
+  applyV21SettingsToDOM();
+  render();
+}
+
+function setAnimSpeed(speed) {
+  myAnimSpeed = (speed === "INSTANT" || speed === "NORMAL" || speed === "SMOOTH") ? speed : "NORMAL";
+  localStorage.setItem("tavli_v21_anim_speed", myAnimSpeed);
+  applyV21SettingsToDOM();
+}
+
+function setBoardTexture(tex) {
+  myBoardTexture = (tex === "GLOSS" || tex === "MATTE" || tex === "WOOD") ? tex : "WOOD";
+  localStorage.setItem("tavli_v21_board_tex", myBoardTexture);
+  applyV21SettingsToDOM();
+}
+
+function calculatePipCount(player) {
+  if (!state || !Array.isArray(state.points) || state.points.length !== 24) return 0;
+  const v = typeof currentVariant === "function" ? currentVariant() : "PORTES";
+  const path = typeof getPath === "function" ? getPath(v, player) : Array.from({ length: 24 }, (_, i) => i);
+  let totalPips = 0;
+
+  if (state.bar && state.bar[player] > 0) {
+    totalPips += state.bar[player] * 25;
+  }
+
+  for (let step = 0; step < 24; step++) {
+    const ptIdx = path[step];
+    const pt = state.points[ptIdx];
+    if (!pt) continue;
+    const pipsForPoint = 24 - step;
+    if (pt.owner === player && pt.count > 0) {
+      totalPips += pt.count * pipsForPoint;
+    }
+    if (v === "PLAKOTO" && pt.pinned === player) {
+      totalPips += pipsForPoint;
+    }
+  }
+  return totalPips;
+}
+
+function getDisplayPointNumber(idx) {
+  if (myPipIndexMode === "OFF") return "";
+  if (myPipIndexMode === "ABSOLUTE") {
+    return String(idx + 1);
+  }
+  const v = typeof currentVariant === "function" ? currentVariant() : "PORTES";
+  const activePlayer = (state && state.turn) ? state.turn : "W";
+  const path = typeof getPath === "function" ? getPath(v, activePlayer) : Array.from({ length: 24 }, (_, i) => i);
+  const step = path.indexOf(idx);
+  return step > -1 ? String(24 - step) : String(idx + 1);
 }
 
 // Dynamically positions the Tutorial Coach Panel:
@@ -431,6 +544,31 @@ function applyLanguageToUI() {
   document.getElementById("thNameTerracotta").textContent = tr.thTerracotta;
   document.getElementById("thNameMidnight").textContent = tr.thMidnight;
   document.getElementById("thNameSakura").textContent = tr.thSakura;
+
+  // Version 21 Settings Labels in Settings Modal
+  const setTxt = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val) el.textContent = val;
+  };
+  setTxt("lblPipIndex", tr.lblPipIndex);
+  setTxt("btnPipOff", tr.optPipOff);
+  setTxt("btnPipAbs", tr.optPipAbs);
+  setTxt("btnPipRel", tr.optPipRel);
+  setTxt("lblPipCounter", tr.lblPipCounter);
+  setTxt("btnPipCountOn", tr.optPipCountOn);
+  setTxt("btnPipCountOff", tr.optPipCountOff);
+  setTxt("lblMoveIndicators", tr.lblMoveIndicators);
+  setTxt("btnIndBadges", tr.optIndBadges);
+  setTxt("btnIndGlow", tr.optIndGlow);
+  setTxt("lblAnimSpeed", tr.lblAnimSpeed);
+  setTxt("btnSpeedInstant", tr.optSpeedInstant);
+  setTxt("btnSpeedNormal", tr.optSpeedNormal);
+  setTxt("btnSpeedSmooth", tr.optSpeedSmooth);
+  setTxt("lblBoardTexture", tr.lblBoardTexture);
+  setTxt("btnTexGloss", tr.optTexGloss);
+  setTxt("btnTexMatte", tr.optTexMatte);
+  setTxt("btnTexWood", tr.optTexWood);
+
   document.getElementById("profCloseBtn").textContent = tr.closeBtn;
   document.getElementById("lbCloseBtn").textContent = tr.closeBtn;
   document.getElementById("settingsCloseBtn").textContent = tr.closeBtn;
@@ -446,6 +584,7 @@ function applyLanguageToUI() {
   checkPersistentLoginSession();
   handleNameInputCheck();
   renderColorPicker();
+  applyV21SettingsToDOM();
   updateHeaderLabels();
   render();
 }
@@ -530,7 +669,7 @@ function getSequenceForMode(mode) {
 }
 
 // ============================================================================
-// CLICKABLE PLAYER PROFILES & GLOBAL PLAYER MESSAGING SYSTEM (v20)
+// CLICKABLE PLAYER PROFILES & GLOBAL PLAYER MESSAGING SYSTEM (v20 / v21)
 // ============================================================================
 async function openProfileModal(targetPlayerName = null) {
   if (!targetPlayerName && !isAuthenticatedAccount && myStoreDetailsPref) {
@@ -563,6 +702,7 @@ async function openSettingsModal() {
   if (!isAuthenticatedAccount && myStoreDetailsPref) {
     await verifyIdentityOnLanding(false);
   }
+  applyV21SettingsToDOM();
   renderSettingsAccountSection();
   document.getElementById("settingsModal").style.display = "flex";
 }
@@ -1504,6 +1644,11 @@ function createDieEl(val, tumbling = false, isUsed = false, playerRole = null) {
     (tumbling ? " tumbling" : "") +
     (isUsed ? " used" : "");
 
+  if (tumbling && typeof ANIM_SPEED_CONFIG !== "undefined" && ANIM_SPEED_CONFIG[myAnimSpeed]) {
+    const dMs = ANIM_SPEED_CONFIG[myAnimSpeed].diceMs;
+    die.style.animationDuration = `${dMs}ms`;
+  }
+
   const activeCells = PIP_MAP[val] || [];
   for (let cell = 0; cell < 9; cell++) {
     const slot = document.createElement("div");
@@ -1571,6 +1716,15 @@ function render() {
   document.getElementById("targetW").textContent = state.targetScore || 7;
   document.getElementById("targetB").textContent = state.targetScore || 7;
   document.getElementById("gameTitle").textContent = tr.variants[v] || v;
+
+  // Version 21: Update Real-Time Pip Counters for both players
+  const pipElW = document.getElementById("pipCountW");
+  const pipElB = document.getElementById("pipCountB");
+  const pipsW = calculatePipCount("W");
+  const pipsB = calculatePipCount("B");
+  const fmtPip = tr.pipCountText ? tr.pipCountText : (c => `${c} pips`);
+  if (pipElW) pipElW.textContent = fmtPip(pipsW);
+  if (pipElB) pipElB.textContent = fmtPip(pipsB);
 
   const isSpectator = (myRole === "SPECTATOR");
   const isMyTurn = !isSpectator && ((myRole === "BOTH" && !isAiMatch) || myRole === state.turn);
@@ -1677,13 +1831,23 @@ function renderPoint(idx) {
   el.setAttribute("data-pt-idx", idx);
   if (selectedFrom === idx) el.classList.add("selected");
 
+  // Version 21: Render Point Number (Pip Index 1–24)
+  if (myPipIndexMode !== "OFF") {
+    const numEl = document.createElement("div");
+    numEl.className = "point-num";
+    numEl.textContent = getDisplayPointNumber(idx);
+    el.appendChild(numEl);
+  }
+
   const targetMove = validTargets.find(m => m.to === idx);
   if (targetMove) {
     el.classList.add("valid-dest");
-    const badge = document.createElement("div");
-    badge.className = "dest-badge";
-    badge.textContent = targetMove.badge;
-    el.appendChild(badge);
+    if (myMoveIndicatorMode !== "GLOW") {
+      const badge = document.createElement("div");
+      badge.className = "dest-badge";
+      badge.textContent = targetMove.badge;
+      el.appendChild(badge);
+    }
   }
   el.onclick = () => handlePointClick(idx);
 
@@ -1737,10 +1901,12 @@ function renderOffSlot(elementId, owner) {
   const offMove = validTargets.find(m => m.to === "OFF");
   if (offMove && state.turn === owner) {
     el.classList.add("valid-dest");
-    const badge = document.createElement("div");
-    badge.className = "dest-badge";
-    badge.textContent = offMove.badge;
-    el.appendChild(badge);
+    if (myMoveIndicatorMode !== "GLOW") {
+      const badge = document.createElement("div");
+      badge.className = "dest-badge";
+      badge.textContent = offMove.badge;
+      el.appendChild(badge);
+    }
   }
   const count = state.off[owner];
   if (count > 0) {

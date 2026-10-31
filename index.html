@@ -353,17 +353,17 @@
       right: 6px;
     }
 
-    /* Clickable Player Link in Leaderboard & Profile */
+    /* Clickable Player Link in Leaderboard & Profile (Underlines Removed in v21) */
     .player-link {
       color: var(--accent);
       font-weight: 800;
       cursor: pointer;
-      text-decoration: underline;
-      text-underline-offset: 2px;
+      text-decoration: none;
       transition: filter 0.15s ease;
     }
     .player-link:hover {
       filter: brightness(1.25);
+      text-decoration: none;
     }
 
     /* Designed Backgammon Artwork Card */
@@ -850,12 +850,63 @@
     .score-box .score-num { font-size: 1.25rem; font-weight: bold; color: var(--accent); }
     .variant-badge { background: var(--wood-mid); padding: 3px 12px; border-radius: 16px; font-weight: bold; font-size: 0.85rem; color: #ffecb3; display: inline-block; }
 
+    /* Version 21: Real-Time Pip Counter Badge in HUD */
+    .pip-counter-badge {
+      display: inline-block;
+      margin-top: 2px;
+      padding: 1px 7px;
+      border-radius: 10px;
+      font-size: 0.68rem;
+      font-weight: 700;
+      background: rgba(0, 0, 0, 0.36);
+      color: #ffecb3;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      letter-spacing: 0.2px;
+    }
+    body.pip-count-off .pip-counter-badge {
+      display: none !important;
+    }
+
     /* Board Layout */
     .board-wrap { width: 100%; aspect-ratio: 4 / 3; background: var(--wood-dark); padding: 8px; border-radius: 12px; display: grid; grid-template-columns: 1fr 38px 1fr 44px; gap: 6px; box-shadow: 0 8px 24px rgba(0,0,0,0.6); position: relative; transition: background 0.25s ease; }
     .half-board { background: var(--board-bg); display: grid; grid-template-rows: 1fr 24px 1fr; border-radius: 4px; overflow: hidden; position: relative; transition: background 0.25s ease; }
     .mid-die-zone { position: relative; display: flex; align-items: center; justify-content: center; gap: 8px; z-index: 15; pointer-events: none; }
     .bar-col, .off-col { background: var(--bar-bg); border-radius: 4px; display: flex; flex-direction: column; justify-content: space-between; align-items: center; padding: 6px 2px; font-size: 0.68rem; color: #bcaaa4; transition: background 0.25s ease; }
     .slot-box { width: 100%; min-height: 42%; display: flex; flex-direction: column; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; position: relative; }
+
+    /* Version 21: Board Surface Texture Finishes (Gloss Inlay, Matte Felt, Rustic Wood) */
+    body.board-tex-gloss .half-board {
+      background-image:
+        linear-gradient(135deg, rgba(255,255,255,0.22) 0%, rgba(255,255,255,0.03) 45%, rgba(0,0,0,0.08) 52%, rgba(255,255,255,0.14) 100%);
+      box-shadow: inset 0 0 0 2px rgba(255, 215, 0, 0.25), inset 0 4px 14px rgba(0,0,0,0.32);
+    }
+    body.board-tex-gloss .point::before {
+      filter: saturate(1.14) contrast(1.06);
+    }
+    body.board-tex-matte .half-board {
+      background-image:
+        radial-gradient(rgba(0,0,0,0.06) 1px, transparent 0),
+        radial-gradient(rgba(255,255,255,0.05) 1px, transparent 0);
+      background-size: 6px 6px;
+      background-position: 0 0, 3px 3px;
+      box-shadow: inset 0 2px 10px rgba(0,0,0,0.42);
+    }
+    body.board-tex-matte .point::before {
+      filter: saturate(0.92) brightness(0.97);
+    }
+    body.board-tex-wood .half-board {
+      background-image:
+        repeating-linear-gradient(
+          90deg,
+          rgba(62, 39, 35, 0.065) 0px,
+          rgba(62, 39, 35, 0.065) 2px,
+          transparent 2px,
+          transparent 9px,
+          rgba(62, 39, 35, 0.035) 9px,
+          rgba(62, 39, 35, 0.035) 14px
+        );
+      box-shadow: inset 0 0 14px rgba(0,0,0,0.38);
+    }
 
     @media (max-width: 600px) {
       .board-wrap {
@@ -867,6 +918,7 @@
       .hud { padding: 5px 8px; }
       .score-box { font-size: 0.72rem; }
       .score-box .score-num { font-size: 1.05rem; }
+      .pip-counter-badge { font-size: 0.62rem; padding: 1px 5px; }
       .btn-action { padding: 7px 11px; font-size: 0.8rem; }
       .die { width: 36px !important; height: 36px !important; padding: 4px !important; }
       .pip { width: 5.5px !important; height: 5.5px !important; }
@@ -881,12 +933,38 @@
     .row.bottom .point:nth-child(odd)::before { background: var(--point-light); clip-path: polygon(50% 0, 0 100%, 100% 100%); bottom: 0; }
     .row.bottom .point:nth-child(even)::before { background: var(--point-dark); clip-path: polygon(50% 0, 0 100%, 100% 100%); bottom: 0; }
 
+    /* Version 21: Point Numbers (Pip Index 1–24) */
+    .point-num {
+      position: absolute;
+      font-size: 0.58rem;
+      font-weight: 800;
+      color: rgba(255, 255, 255, 0.88);
+      background: rgba(0, 0, 0, 0.48);
+      padding: 0px 4px;
+      border-radius: 4px;
+      z-index: 8;
+      pointer-events: none;
+      line-height: 1.15;
+    }
+    .row.top .point .point-num { top: 1px; }
+    .row.bottom .point .point-num { bottom: 1px; }
+    body.pip-index-off .point-num { display: none !important; }
+
     .selected { outline: 3px solid var(--accent); border-radius: 4px; }
     .valid-dest { box-shadow: inset 0 0 0 3px var(--valid); border-radius: 4px; }
     .dest-badge { position: absolute; z-index: 10; background: var(--valid); color: #000; font-size: 0.63rem; font-weight: 800; padding: 1px 5px; border-radius: 8px; pointer-events: none; box-shadow: 0 2px 4px rgba(0,0,0,0.5); }
     .row.top .dest-badge { bottom: 4px; }
     .row.bottom .dest-badge { top: 4px; }
     .slot-box .dest-badge { bottom: 4px; }
+
+    /* Version 21: Legal Move Target Indicators (Green Badges vs. Simple Outline Glow) */
+    body.move-ind-glow .dest-badge {
+      display: none !important;
+    }
+    body.move-ind-glow .valid-dest {
+      box-shadow: inset 0 0 0 3px var(--valid), 0 0 12px rgba(0, 230, 118, 0.72) !important;
+      border-radius: 6px;
+    }
 
     /* Checkers & 8 Distinct Color Palettes */
     .checker { width: 78%; aspect-ratio: 1; border-radius: 50%; z-index: 1; display: flex; align-items: center; justify-content: center; font-size: 0.68rem; font-weight: bold; margin: 1px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.55); position: relative; }
@@ -972,7 +1050,7 @@
     .chat-input-row button { padding: 7px 12px; border-radius: 6px; border: none; background: var(--accent); color: #111; font-weight: bold; font-size: 0.8rem; cursor: pointer; }
   </style>
 </head>
-<body data-theme="classic">
+<body data-theme="classic" class="move-ind-badges board-tex-wood">
 
   <!-- ==========================================================================
        MAIN LANDING HUB SCREEN (NO GAME BOARD BEHIND)
@@ -1080,6 +1158,7 @@
               <polygon points="45,226 69,226 57,138" fill="#8d3b29"/>
               <polygon points="70,226 94,226 82,138" fill="#c89d66"/>
               <polygon points="95,226 119,226 107,138" fill="#8d3b29"/>
+              <polygon points="120,226 32,138" fill="none"/>
               <polygon points="120,226 144,226 132,138" fill="#c89d66"/>
               <polygon points="145,226 169,226 157,138" fill="#8d3b29"/>
             </g>
@@ -1226,7 +1305,7 @@
     </div>
   </div>
 
-  <!-- 4. Settings Pop-Up Modal -->
+  <!-- 4. Settings Pop-Up Modal (Updated with Version 21 Settings 1–5) -->
   <div class="modal-overlay" id="settingsModal" style="display:none;">
     <div class="modal-card wide-modal">
       <h2 id="settingsModalTitle">Settings</h2>
@@ -1235,6 +1314,40 @@
       <div class="toggle-row">
         <div class="toggle-opt active" id="setLangEN" onclick="selectLangPref('en')">English</div>
         <div class="toggle-opt" id="setLangEL" onclick="selectLangPref('el')">Ελληνικά</div>
+      </div>
+
+      <!-- Version 21: 5 New Board & Gameplay Settings -->
+      <div class="sub-heading" id="lblPipIndex">1. Point Numbers Toggle (Pip Index)</div>
+      <div class="toggle-row">
+        <div class="toggle-opt" id="btnPipOff" onclick="setPipIndexMode('OFF')">Hidden</div>
+        <div class="toggle-opt" id="btnPipAbs" onclick="setPipIndexMode('ABSOLUTE')">Standard (1–24)</div>
+        <div class="toggle-opt active" id="btnPipRel" onclick="setPipIndexMode('RELATIVE')">Relative to Active Player</div>
+      </div>
+
+      <div class="sub-heading" id="lblPipCounter">2. Real-Time Pip Count Display</div>
+      <div class="toggle-row">
+        <div class="toggle-opt active" id="btnPipCountOn" onclick="setPipCountDisplay(true)">Show Pip Counter</div>
+        <div class="toggle-opt" id="btnPipCountOff" onclick="setPipCountDisplay(false)">Hide Pip Counter</div>
+      </div>
+
+      <div class="sub-heading" id="lblMoveIndicators">3. Legal Move Target Indicators</div>
+      <div class="toggle-row">
+        <div class="toggle-opt active" id="btnIndBadges" onclick="setMoveIndicatorMode('BADGES')">Green Distance Badges</div>
+        <div class="toggle-opt" id="btnIndGlow" onclick="setMoveIndicatorMode('GLOW')">Simple Outline Glow</div>
+      </div>
+
+      <div class="sub-heading" id="lblAnimSpeed">4. Checker &amp; Dice Animation Speed</div>
+      <div class="toggle-row">
+        <div class="toggle-opt" id="btnSpeedInstant" onclick="setAnimSpeed('INSTANT')">Instant</div>
+        <div class="toggle-opt active" id="btnSpeedNormal" onclick="setAnimSpeed('NORMAL')">Normal</div>
+        <div class="toggle-opt" id="btnSpeedSmooth" onclick="setAnimSpeed('SMOOTH')">Smooth Flight</div>
+      </div>
+
+      <div class="sub-heading" id="lblBoardTexture">5. Board Texture Style</div>
+      <div class="toggle-row">
+        <div class="toggle-opt" id="btnTexGloss" onclick="setBoardTexture('GLOSS')">Gloss Inlay</div>
+        <div class="toggle-opt" id="btnTexMatte" onclick="setBoardTexture('MATTE')">Matte Felt</div>
+        <div class="toggle-opt active" id="btnTexWood" onclick="setBoardTexture('WOOD')">Rustic Wood</div>
       </div>
 
       <div class="sub-heading" id="lblSettingsTheme">Board &amp; UI Colour Theme (8 Themes)</div>
@@ -1391,14 +1504,22 @@
         ⚠️ You have temporarily blocked all 6 starting places! Use your remaining move to unblock at least 1 starting place.
       </div>
 
-      <!-- Match Scoreboard -->
+      <!-- Match Scoreboard with Real-Time Pip Counters -->
       <div class="hud">
-        <div class="score-box"><span id="colorLabelW">White</span> (<span id="nameW">Player 1</span>)<br><span class="score-num" id="scoreW">0</span> / <span id="targetW">7</span></div>
+        <div class="score-box">
+          <span id="colorLabelW">White</span> (<span id="nameW">Player 1</span>)<br>
+          <span class="score-num" id="scoreW">0</span> / <span id="targetW">7</span><br>
+          <span class="pip-counter-badge" id="pipCountW">167 pips</span>
+        </div>
         <div style="text-align:center;">
           <div class="variant-badge" id="gameTitle">PORTES</div>
           <div id="turnText" style="font-size:0.8rem; margin-top:3px; color:#ffe082;">Roll 1 Die for First Turn</div>
         </div>
-        <div class="score-box"><span id="colorLabelB">Black</span> (<span id="nameB">Player 2</span>)<br><span class="score-num" id="scoreB">0</span> / <span id="targetB">7</span></div>
+        <div class="score-box">
+          <span id="colorLabelB">Black</span> (<span id="nameB">Player 2</span>)<br>
+          <span class="score-num" id="scoreB">0</span> / <span id="targetB">7</span><br>
+          <span class="pip-counter-badge" id="pipCountB">167 pips</span>
+        </div>
       </div>
 
       <!-- Game Board -->
@@ -1469,7 +1590,7 @@
   </div>
 
   <!-- Small Version Label at Bottom-Right -->
-  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v20</div>
+  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v21</div>
 
   <script src="i18n.js"></script>
   <script src="tutorial.js"></script>
