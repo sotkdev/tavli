@@ -1,4 +1,4 @@
-// e-Tavli — Bilingual Dictionary, V21/V22 Settings State, Live Games Lobby & Global Constants (i18n.js — v22)
+// e-Tavli — Bilingual Dictionary, V21–V23 Settings State, Live Games Lobby & Global Constants (i18n.js — v23)
 
 let myLang = "en";
 let myTheme = "classic";
@@ -13,6 +13,9 @@ let myPipCountDisplay = localStorage.getItem("tavli_v21_pip_count") !== "OFF";  
 let myMoveIndicatorMode = localStorage.getItem("tavli_v21_move_ind") || "BADGES"; // 'BADGES' | 'GLOW'
 let myAnimSpeed = localStorage.getItem("tavli_v21_anim_speed") || "NORMAL";       // 'INSTANT' | 'NORMAL' | 'SMOOTH'
 let myBoardTexture = localStorage.getItem("tavli_v21_board_tex") || "WOOD";       // 'GLOSS' | 'MATTE' | 'WOOD'
+// --- Version 23: Tap Controls & Auto-Bearoff Settings State ---
+let myTapControlMode = localStorage.getItem("tavli_v23_tap_mode") || "SELECT";    // 'SELECT' | 'AUTO_LARGEST'
+let myAutoBearOff = localStorage.getItem("tavli_v23_auto_bearoff") === "ON";      // true | false
 
 const ANIM_SPEED_CONFIG = {
   INSTANT: { checkerMs: 0,   diceMs: 0   },
@@ -192,6 +195,12 @@ const I18N = {
     optTexGloss: "Gloss Inlay",
     optTexMatte: "Matte Felt",
     optTexWood: "Rustic Wood",
+    lblTapControls: "6. Single-Tap / Double-Tap Controls",
+    optTapSelect: "Tap to Select (Double-Tap Bear-Off)",
+    optTapAutoMax: "Single-Tap Auto-Advance (Largest Die)",
+    lblAutoBearOff: "7. Auto-Bearoff Confirmation",
+    optAutoBearOffOff: "Manual Confirmation (Off)",
+    optAutoBearOffOn: "Auto-Bearoff When Forced (On)",
     pipCountText: count => `${count} pips`,
     closeBtn: "Back / Close",
     profGuestMsg: "You are currently playing as a Guest. Enable 'Store Details (PIN)' on the main menu to track stats!",
@@ -417,6 +426,12 @@ const I18N = {
     optTexGloss: "Γυαλιστερό Ένθετο",
     optTexMatte: "Ματ Τσόχα",
     optTexWood: "Ρουστίκ Ξύλο",
+    lblTapControls: "6. Έλεγχος Κίνησης Πουλιών (Απλό / Διπλό Πάτημα)",
+    optTapSelect: "1 Πάτημα Επιλογή (2 για Μάζεμα)",
+    optTapAutoMax: "1 Πάτημα Αυτόματη Κίνηση (Μεγαλύτερο Ζάρι)",
+    lblAutoBearOff: "7. Αυτόματο Μάζεμα Πουλιών (Auto-Bearoff)",
+    optAutoBearOffOff: "Χειροκίνητη Επιβεβαίωση (Όχι)",
+    optAutoBearOffOn: "Αυτόματο όταν είναι Υποχρεωτικό (Ναι)",
     pipCountText: count => `${count} pips`,
     closeBtn: "Πίσω / Κλείσιμο",
     profGuestMsg: "Παίζετε ως Επισκέπτης. Ενεργοποιήστε την Αποθήκευση (PIN) στο αρχικό μενού για καταγραφή στατιστικών!",

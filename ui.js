@@ -1,4 +1,4 @@
-// e-Tavli — UI, Auth, Modals, Live Games Lobby, Autocomplete Player Messaging, V21/V22 Settings & Board Renderer (ui.js — v22)
+// e-Tavli — UI, Auth, Modals, Live Games Lobby, Autocomplete Player Messaging, V21–V23 Settings & Board Renderer (ui.js — v23)
 
 function t() {
   return I18N[myLang] || I18N.en;
@@ -65,6 +65,14 @@ function applyV21SettingsToDOM() {
   setActiveToggleOpt("btnTexGloss", myBoardTexture === "GLOSS");
   setActiveToggleOpt("btnTexMatte", myBoardTexture === "MATTE");
   setActiveToggleOpt("btnTexWood", myBoardTexture === "WOOD");
+
+  // 6. Single-Tap / Double-Tap Controls (v23)
+  setActiveToggleOpt("btnTapSelect", myTapControlMode !== "AUTO_LARGEST");
+  setActiveToggleOpt("btnTapAutoMax", myTapControlMode === "AUTO_LARGEST");
+
+  // 7. Auto-Bearoff Confirmation (v23)
+  setActiveToggleOpt("btnAutoBearOffOff", !myAutoBearOff);
+  setActiveToggleOpt("btnAutoBearOffOn", Boolean(myAutoBearOff));
 }
 
 function setPipIndexMode(mode) {
@@ -98,6 +106,21 @@ function setBoardTexture(tex) {
   myBoardTexture = (tex === "GLOSS" || tex === "MATTE" || tex === "WOOD") ? tex : "WOOD";
   localStorage.setItem("tavli_v21_board_tex", myBoardTexture);
   applyV21SettingsToDOM();
+}
+
+function setTapControlMode(mode) {
+  myTapControlMode = (mode === "AUTO_LARGEST") ? "AUTO_LARGEST" : "SELECT";
+  localStorage.setItem("tavli_v23_tap_mode", myTapControlMode);
+  applyV21SettingsToDOM();
+}
+
+function setAutoBearOff(enabled) {
+  myAutoBearOff = Boolean(enabled);
+  localStorage.setItem("tavli_v23_auto_bearoff", myAutoBearOff ? "ON" : "OFF");
+  applyV21SettingsToDOM();
+  if (myAutoBearOff && typeof checkAndRunForcedAutoBearOff === "function") {
+    checkAndRunForcedAutoBearOff();
+  }
 }
 
 function calculatePipCount(player) {
@@ -576,6 +599,12 @@ function applyLanguageToUI() {
   setTxt("btnTexGloss", tr.optTexGloss);
   setTxt("btnTexMatte", tr.optTexMatte);
   setTxt("btnTexWood", tr.optTexWood);
+  setTxt("lblTapControls", tr.lblTapControls);
+  setTxt("btnTapSelect", tr.optTapSelect);
+  setTxt("btnTapAutoMax", tr.optTapAutoMax);
+  setTxt("lblAutoBearOff", tr.lblAutoBearOff);
+  setTxt("btnAutoBearOffOff", tr.optAutoBearOffOff);
+  setTxt("btnAutoBearOffOn", tr.optAutoBearOffOn);
 
   document.getElementById("profCloseBtn").textContent = tr.closeBtn;
   document.getElementById("lbCloseBtn").textContent = tr.closeBtn;

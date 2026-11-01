@@ -1,4 +1,4 @@
-// e-Tavli — Core Game Engine, Fevga Rules, AI, Live Games Lobby Sync, Single-Increment Stats Guarantee, Tutorial, Global Messaging & WebRTC Multiplayer (app.js — v22)
+// e-Tavli — Core Game Engine, Fevga Rules, AI, Single-Tap Auto-Advance, Forced Auto-Bearoff, Live Games Lobby Sync & WebRTC/Cloud Multiplayer (app.js — v23)
 
 const PEER_CONFIG = {
   pingInterval: 5000,
@@ -128,58 +128,74 @@ function createCloudVirtualConn(targetChannel, roomCode) {
 
 function startHostCloudRelayListener(code) {
   stopCloudRelayPolling();
-  if (!window.TavliDB || typeof window.TavliDB.pullRoomSignalPacket !== "function") return;
+  if (!window.TavliDB || typeof window.TavliDB.pullRoomSignalPackets !== "function") return;
   window.TavliDB.clearRoomSignalPackets(code);
 
+  let isPolling = false;
   cloudRelayPollTimer = setInterval(async () => {
+    if (isPolling) return;
     if (myRole !== "W" || activeRoomCode !== code || isAiMatch || isTutorialMode) {
       stopCloudRelayPolling();
       return;
     }
-    const env = await window.TavliDB.pullRoomSignalPacket(code, "TO_HOST");
-    if (!env || !env.id || env.id === lastProcessedCloudSignalId || !env.packet) return;
-    lastProcessedCloudSignalId = env.id;
+    isPolling = true;
+    try {
+      const envelopes = await window.TavliDB.pullRoomSignalPackets(code, "TO_HOST");
+      for (const env of envelopes) {
+        if (!env || !env.id || processedCloudSignalIds.has(env.id) || !env.packet) continue;
+        processedCloudSignalIds.add(env.id);
 
-    // If a real WebRTC connection is already open and active with Player B, ignore duplicate HELLO from cloud
-    if (conn && conn.open && !conn._isCloudVirtual && env.packet.type === "HELLO" && env.packet.role !== "SPECTATOR") {
-      return;
-    }
+        if (conn && conn.open && !conn._isCloudVirtual && env.packet.type === "HELLO" && env.packet.role !== "SPECTATOR") {
+          continue;
+        }
 
-    // Create or reuse virtual cloud connection for Player B or Spectator
-    const isSpec = (env.packet.role === "SPECTATOR");
-    if (isSpec) {
-      const specVirtual = createCloudVirtualConn("TO_CLIENT", code);
-      specVirtual._isSpectator = true;
-      handleHostIncomingPacket(env.packet, specVirtual, code);
-    } else {
-      if (!conn || !conn.open) {
-        conn = createCloudVirtualConn("TO_CLIENT", code);
-        isCloudRelayConnected = true;
+        const isSpec = (env.packet.role === "SPECTATOR");
+        if (isSpec) {
+          const specVirtual = createCloudVirtualConn("TO_CLIENT", code);
+          specVirtual._isSpectator = true;
+          handleHostIncomingPacket(env.packet, specVirtual, code);
+        } else {
+          if (!conn || !conn.open) {
+            conn = createCloudVirtualConn("TO_CLIENT", code);
+            isCloudRelayConnected = true;
+          }
+          handleHostIncomingPacket(env.packet, conn, code);
+        }
       }
-      handleHostIncomingPacket(env.packet, conn, code);
+    } finally {
+      isPolling = false;
     }
-  }, 900);
+  }, 650);
 }
 
 function startClientCloudRelayListener(code, asSpectator, onPacketCallback) {
   stopCloudRelayPolling();
-  if (!window.TavliDB || typeof window.TavliDB.pullRoomSignalPacket !== "function") return;
+  if (!window.TavliDB || typeof window.TavliDB.pullRoomSignalPackets !== "function") return;
 
+  let isPolling = false;
   cloudRelayPollTimer = setInterval(async () => {
+    if (isPolling) return;
     if (activeRoomCode !== code || (myRole !== "B" && myRole !== "SPECTATOR")) {
       stopCloudRelayPolling();
       return;
     }
-    const env = await window.TavliDB.pullRoomSignalPacket(code, "TO_CLIENT");
-    if (!env || !env.id || env.id === lastProcessedCloudSignalId || !env.packet) return;
-    lastProcessedCloudSignalId = env.id;
+    isPolling = true;
+    try {
+      const envelopes = await window.TavliDB.pullRoomSignalPackets(code, "TO_CLIENT");
+      for (const env of envelopes) {
+        if (!env || !env.id || processedCloudSignalIds.has(env.id) || !env.packet) continue;
+        processedCloudSignalIds.add(env.id);
 
-    if (!conn || !conn.open) {
-      conn = createCloudVirtualConn("TO_HOST", code);
-      isCloudRelayConnected = true;
+        if (!conn || !conn.open) {
+          conn = createCloudVirtualConn("TO_HOST", code);
+          isCloudRelayConnected = true;
+        }
+        onPacketCallback(env.packet);
+      }
+    } finally {
+      isPolling = false;
     }
-    onPacketCallback(env.packet);
-  }, 900);
+  }, 650);
 }
 
 let liveRoomHeartbeatTimer = null;
@@ -678,6 +694,8 @@ function handleRoll(triggeredByAi = false) {
     render();
     if (isAiMatch && state.turn === "B") {
       setTimeout(() => playAiTurnSequence(), 500);
+    } else {
+      checkAndRunForcedAutoBearOff();
     }
   });
 }
@@ -1210,10 +1228,79 @@ function tryBearOffFromPoint(idx) {
   return true;
 }
 
+// --- Version 23: Single-Tap Auto-Advance (Largest Available Legal Die) ---
+function tryAutoAdvanceLargestDie(origin) {
+  const player = state.turn;
+  const singleMoves = getSingleStepMovesFrom(state, origin, player);
+  if (singleMoves.length === 0) return false;
+
+  // Prefer the largest legal single-step die; if bearing off, prefer exact bear-off first or largest die
+  singleMoves.sort((a, b) => {
+    if (b.die !== a.die) return b.die - a.die;
+    if (a.to === "OFF" && b.to !== "OFF") return -1;
+    if (b.to === "OFF" && a.to !== "OFF") return 1;
+    return 0;
+  });
+
+  executeMoveSequence([singleMoves[0]]);
+  return true;
+}
+
+// --- Version 23: Auto-Bearoff Confirmation When No Other Legal Moves Exist ---
+function checkAndRunForcedAutoBearOff() {
+  if (!myAutoBearOff || isTutorialMode || myRole === "SPECTATOR") return false;
+  if (state.phase !== "PLAY" || isWaitingForReconnect || !state.rolled || isAnimatingDice || isAnimatingChecker) return false;
+  if (state.dice.length === 0) return false;
+
+  const player = state.turn;
+  if (isAiMatch && player === "B") return false;
+  if (myRole !== "BOTH" && myRole !== player) return false;
+  if (state.bar[player] > 0) return false;
+
+  const allSingleMoves = [];
+  for (let i = 0; i < 24; i++) {
+    if (state.points[i].owner === player && state.points[i].count > 0) {
+      allSingleMoves.push(...getSingleStepMovesFrom(state, i, player));
+    }
+  }
+
+  if (allSingleMoves.length === 0) return false;
+
+  // Only auto-bearoff when EVERY legal move available on the board is a bear-off move (to === 'OFF')
+  const allAreBearOff = allSingleMoves.every(m => m.to === "OFF");
+  if (!allAreBearOff) return false;
+
+  allSingleMoves.sort((a, b) => {
+    if (a.exact !== b.exact) return a.exact ? -1 : 1;
+    return b.die - a.die;
+  });
+
+  const chosenStep = allSingleMoves[0];
+  setTimeout(() => {
+    if (
+      myAutoBearOff &&
+      state.phase === "PLAY" &&
+      state.rolled &&
+      !isAnimatingDice &&
+      !isAnimatingChecker &&
+      state.turn === player &&
+      state.dice.includes(chosenStep.die)
+    ) {
+      executeMoveSequence([chosenStep]);
+    }
+  }, 160);
+  return true;
+}
+
 function selectBar(player) {
   if (myRole === "SPECTATOR") return;
   if (state.phase !== "PLAY" || isWaitingForReconnect || !state.rolled || isAnimatingDice || isAnimatingChecker || state.turn !== player) return;
   if (myRole !== "BOTH" && myRole !== state.turn) return;
+
+  if (myTapControlMode === "AUTO_LARGEST" && state.bar[player] > 0) {
+    if (tryAutoAdvanceLargestDie("BAR")) return;
+  }
+
   selectedFrom = "BAR";
   validTargets = getMovesFrom("BAR", player);
   render();
@@ -1242,6 +1329,12 @@ function handlePointClick(idx) {
   }
 
   if (state.points[idx].owner === state.turn && state.points[idx].count > 0) {
+    if (myTapControlMode === "AUTO_LARGEST") {
+      if (tryAutoAdvanceLargestDie(idx)) {
+        lastPointTap = { idx: -1, time: 0 };
+        return;
+      }
+    }
     selectedFrom = idx;
     validTargets = getMovesFrom(idx, state.turn);
     render();
@@ -1328,6 +1421,9 @@ function executeMoveSequence(steps, onSequenceDone = null) {
 
     syncState();
     render();
+    if (!turnFinished) {
+      checkAndRunForcedAutoBearOff();
+    }
   });
 }
 

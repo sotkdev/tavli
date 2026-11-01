@@ -1442,6 +1442,19 @@
         <div class="toggle-opt active" id="btnTexWood" onclick="setBoardTexture('WOOD')">Rustic Wood</div>
       </div>
 
+      <!-- Version 23: Single-Tap / Double-Tap Controls & Auto-Bearoff Confirmation -->
+      <div class="sub-heading" id="lblTapControls">6. Single-Tap / Double-Tap Controls</div>
+      <div class="toggle-row">
+        <div class="toggle-opt active" id="btnTapSelect" onclick="setTapControlMode('SELECT')">Tap to Select (Double-Tap Bear-Off)</div>
+        <div class="toggle-opt" id="btnTapAutoMax" onclick="setTapControlMode('AUTO_LARGEST')">Single-Tap Auto-Advance (Largest Die)</div>
+      </div>
+
+      <div class="sub-heading" id="lblAutoBearOff">7. Auto-Bearoff Confirmation</div>
+      <div class="toggle-row">
+        <div class="toggle-opt active" id="btnAutoBearOffOff" onclick="setAutoBearOff(false)">Manual Confirmation (Off)</div>
+        <div class="toggle-opt" id="btnAutoBearOffOn" onclick="setAutoBearOff(true)">Auto-Bearoff When Forced (On)</div>
+      </div>
+
       <div class="sub-heading" id="lblSettingsTheme">Board &amp; UI Colour Theme (8 Themes)</div>
       <div class="theme-grid">
         <div class="theme-card active" id="themeCard_classic" onclick="selectTheme('classic')">
@@ -1682,7 +1695,7 @@
   </div>
 
   <!-- Small Version Label at Bottom-Right -->
-  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v22</div>
+  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v23</div>
 
   <script src="i18n.js"></script>
   <script src="tutorial.js"></script>

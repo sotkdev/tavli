@@ -1,4 +1,4 @@
-// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, Deduplicated Stats, Live Games Lobby & Global Messaging (database.js — v22)
+// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, Deduplicated Stats, Live Games Lobby & Global Messaging (database.js — v23)
 // Always points to: https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json
 
 const TAVLI_DB_STORAGE_KEY = "tavli_players_database_v1";
@@ -425,6 +425,7 @@ window.TavliDB = {
   async pushRoomSignalPacket(roomCode, targetRole, packet) {
     const code = String(roomCode || "").trim().toUpperCase();
     if (!code || !targetRole || !packet) return false;
+    // Use POST so Firebase appends each packet in chronological order without ever overwriting previous packets!
     const url = this.getSubPathUrl(`roomSignals/${encodeURIComponent(code)}/${encodeURIComponent(targetRole)}`);
     if (!url) return false;
     const envelope = {
@@ -434,7 +435,7 @@ window.TavliDB = {
     };
     try {
       const res = await fetch(url, {
-        method: "PUT",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(envelope)
       });
@@ -444,21 +445,27 @@ window.TavliDB = {
     }
   },
 
-  async pullRoomSignalPacket(roomCode, myTargetRole) {
+  async pullRoomSignalPackets(roomCode, myTargetRole) {
     const code = String(roomCode || "").trim().toUpperCase();
-    if (!code || !myTargetRole) return null;
+    if (!code || !myTargetRole) return [];
     const url = this.getSubPathUrl(`roomSignals/${encodeURIComponent(code)}/${encodeURIComponent(myTargetRole)}`);
-    if (!url) return null;
+    if (!url) return [];
     try {
       const res = await fetch(url, {
         method: "GET",
         headers: { "Accept": "application/json" },
         cache: "no-store"
       });
-      if (!res.ok) return null;
-      return await res.json();
+      if (!res.ok) return [];
+      const data = await res.json();
+      if (!data || typeof data !== "object") return [];
+      // Convert Firebase push-id map (or single object) into a chronologically sorted array of envelopes
+      if (data.id && data.packet) return [data];
+      return Object.values(data)
+        .filter(item => item && item.id && item.packet)
+        .sort((a, b) => (a.ts || 0) - (b.ts || 0));
     } catch (_) {
-      return null;
+      return [];
     }
   },
 
