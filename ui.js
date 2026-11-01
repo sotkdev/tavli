@@ -960,19 +960,19 @@ function renderLiveGamesModalContent() {
 function handleLiveRoomAction(roomCode, actionMode) {
   closeLiveGamesModal();
   const cleanCode = String(roomCode || "").trim().toUpperCase();
+  pendingRoomFromUrl = cleanCode;
   const roomInput = document.getElementById("modalRoomInput");
   if (roomInput) roomInput.value = cleanCode;
 
   if (actionMode === "JOIN") {
-    // Open the Joining Player setup menu (with checker colour picker & room code pre-filled)
-    openPlaySetupModal("JOIN");
-    if (roomInput) roomInput.value = cleanCode;
+    // Open the Joining Player setup menu immediately with the exact room code pre-filled
+    openPlaySetupModal("JOIN", cleanCode);
   } else {
     // Spectate directly (or open spectate setup if guest auth needed)
     if (!isAuthenticatedAccount && myStoreDetailsPref) {
-      openPlaySetupModal("SPECTATE");
-      if (roomInput) roomInput.value = cleanCode;
+      openPlaySetupModal("SPECTATE", cleanCode);
     } else {
+      pendingRoomFromUrl = null;
       showScreen("GAME");
       joinRoomWithCode(cleanCode, true);
     }

@@ -1,12 +1,17 @@
 // e-Tavli — Core Game Engine, Fevga Rules, AI, Live Games Lobby Sync, Single-Increment Stats Guarantee, Tutorial, Global Messaging & WebRTC Multiplayer (app.js — v22)
 
 const PEER_CONFIG = {
+  pingInterval: 5000,
   config: {
+    iceCandidatePoolSize: 4,
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
       { urls: "stun:stun.cloudflare.com:3478" },
       { urls: "turn:openrelay.metered.ca:80", username: "openrelayproject", credential: "openrelayproject" },
-      { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" }
+      { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
+      { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" }
     ]
   }
 };
@@ -69,6 +74,7 @@ let opponentLeftHandled = false;
 let localTypingTimeout = null;
 let remoteTypingTimeout = null;
 let helloRetryTimer = null;  // Handshake retry loop for reliable Spectator & Joiner connection
+let clientConnectRetryTimer = null; // Automatic WebRTC connection retry timer if channel hangs or Host isn't ready yet
 
 let packetQueue = [];
 let isProcessingPacket = false;
@@ -84,6 +90,10 @@ function stopHelloRetry() {
   if (helloRetryTimer) {
     clearInterval(helloRetryTimer);
     helloRetryTimer = null;
+  }
+  if (clientConnectRetryTimer) {
+    clearTimeout(clientConnectRetryTimer);
+    clientConnectRetryTimer = null;
   }
 }
 
@@ -141,13 +151,24 @@ function updateSpectatorBadge(count) {
   }
 }
 
-async function openPlaySetupModal(role) {
+async function openPlaySetupModal(role, prefilledCode = null) {
   const tr = t();
   checkPersistentLoginSession();
 
+  const roomInput = document.getElementById("modalRoomInput");
+  if (prefilledCode && roomInput) {
+    roomInput.value = String(prefilledCode).trim().toUpperCase();
+  } else if (pendingRoomFromUrl && roomInput && (role === "JOIN" || role === "SPECTATE")) {
+    roomInput.value = pendingRoomFromUrl;
+  } else if (!pendingRoomFromUrl && roomInput && (role === "JOIN" || role === "SPECTATE")) {
+    // Only prefill if there is a fresh backup for a room we were just in, otherwise keep clean
+    const freshBackup = getActiveRoomBackup();
+    roomInput.value = (freshBackup && freshBackup.roomCode) ? freshBackup.roomCode : "";
+  }
+
   const guestAuthBox = document.getElementById("inviteGuestAuthSection");
   const isJoinOrSpectate = (role === "JOIN" || role === "SPECTATE");
-  const isUnloggedInvite = (isJoinOrSpectate && pendingRoomFromUrl && !isAuthenticatedAccount);
+  const isUnloggedInvite = (isJoinOrSpectate && !isAuthenticatedAccount);
 
   if (isUnloggedInvite) {
     guestAuthBox.style.display = "block";
@@ -157,9 +178,11 @@ async function openPlaySetupModal(role) {
     }
   } else {
     guestAuthBox.style.display = "none";
-    const ok = await verifyIdentityOnLanding(false);
-    if (!ok && myStoreDetailsPref) {
-      return;
+    if (!isJoinOrSpectate) {
+      const ok = await verifyIdentityOnLanding(false);
+      if (!ok && myStoreDetailsPref) {
+        return;
+      }
     }
   }
 
@@ -247,13 +270,17 @@ async function confirmStartSelectedMode() {
   localStorage.setItem("tavli_player_color", myChosenColor);
 
   if (modalRole === "JOIN" || modalRole === "SPECTATE") {
-    const joinCode = (pendingRoomFromUrl || document.getElementById("modalRoomInput").value || "").trim().toUpperCase();
+    const typedCode = (document.getElementById("modalRoomInput").value || "").trim().toUpperCase();
+    const joinCode = (typedCode || pendingRoomFromUrl || "").trim().toUpperCase();
     if (joinCode.length !== 6) {
       alert(tr.enter6CodeAlert);
       return;
     }
     const asSpectator = (modalRole === "SPECTATE");
     pendingRoomFromUrl = null;
+    if (window.location.search) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
     closePlayConfigModal();
     showScreen("GAME");
     joinRoomWithCode(joinCode, asSpectator);
@@ -1739,17 +1766,29 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
   if (typeof syncTutorialPanelPlacement === "function") {
     syncTutorialPanelPlacement();
   }
+  if (!reconnectingCode && !restoredBackup) {
+    clearActiveRoomBackup();
+  }
   spectatorConns = [];
-  const code = reconnectingCode || generateSecureRoomCode();
+  const code = (reconnectingCode || generateSecureRoomCode()).trim().toUpperCase();
   activeRoomCode = code;
+  const modalInput = document.getElementById("modalRoomInput");
+  if (modalInput) modalInput.value = code;
+
   packetQueue = [];
   isProcessingPacket = false;
-  if (peer) peer.destroy();
+  if (conn) {
+    try { conn.close(); } catch (_) {}
+    conn = null;
+  }
+  if (peer) {
+    try { peer.destroy(); } catch (_) {}
+    peer = null;
+  }
 
-  peer = new Peer("tavli-net-" + code, PEER_CONFIG);
+  myRole = "W";
   document.getElementById("netStatus").textContent = t().hostingWait(code);
   document.getElementById("shareBtn").style.display = "inline-block";
-  myRole = "W";
   updateSpectatorBadge(0);
 
   if (restoredBackup && restoredBackup.state) {
@@ -1757,9 +1796,11 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
     state = cloneState(restoredBackup.state);
     state.playerNames = { W: playerNames.W, B: playerNames.B };
     updateHeaderLabels();
+    saveActiveRoomBackup();
     render();
   } else {
     playerNames.W = myPlayerName;
+    playerNames.B = "Player 2";
     state.playerNames = { W: playerNames.W, B: playerNames.B };
     state.colors.W = myChosenColor;
     if (state.colors.B === state.colors.W) {
@@ -1776,20 +1817,55 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
     initGame("ROLL_OFF");
   }
 
+  peer = new Peer("tavli-net-" + code, PEER_CONFIG);
+
   peer.on("open", () => {
+    document.getElementById("netStatus").textContent = t().hostingWait(activeRoomCode);
     startHostLiveRoomHeartbeat();
-    if (!restoredBackup) shareInviteLink(code);
+    // Copy invite link quietly to clipboard so the browser doesn't block WebRTC with a native OS share sheet
+    if (!restoredBackup && navigator.clipboard && navigator.clipboard.writeText) {
+      const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${activeRoomCode}`;
+      navigator.clipboard.writeText(inviteUrl).catch(() => {});
+    }
   });
 
   peer.on("connection", incomingConn => {
-    setupIncomingHostConn(incomingConn, code);
+    setupIncomingHostConn(incomingConn, activeRoomCode);
   });
-  peer.on("disconnected", () => peer.reconnect());
+
+  peer.on("disconnected", () => {
+    if (peer && !peer.destroyed) {
+      try { peer.reconnect(); } catch (_) {}
+    }
+  });
+
+  peer.on("error", err => {
+    if (err && err.type === "unavailable-id") {
+      if (!reconnectingCode) {
+        // Generate a fresh code if there was an extremely rare collision
+        setTimeout(() => hostRoom(null, restoredBackup), 400);
+      } else {
+        // Previous socket on signaling server hasn't timed out yet; retry in 1.5s
+        setTimeout(() => {
+          if (myRole === "W" && activeRoomCode === code && (!conn || !conn.open)) {
+            hostRoom(code, restoredBackup);
+          }
+        }, 1500);
+      }
+    } else if (err && (err.type === "network" || err.type === "server-error" || err.type === "socket-error" || err.type === "socket-closed")) {
+      if (peer && !peer.destroyed) {
+        setTimeout(() => {
+          try { peer.reconnect(); } catch (_) {}
+        }, 1000);
+      }
+    }
+  });
 }
 
 function joinRoomWithCode(rawCode, asSpectator = false) {
   ensureAudio();
   stopHelloRetry();
+  stopHostLiveRoomHeartbeat(false);
   isAiMatch = false;
   isTutorialMode = false;
   if (typeof syncTutorialPanelPlacement === "function") {
@@ -1799,9 +1875,17 @@ function joinRoomWithCode(rawCode, asSpectator = false) {
   const code = String(rawCode || "").trim().toUpperCase();
   if (code.length !== 6) return alert(t().enter6CodeAlert);
 
+  const modalInput = document.getElementById("modalRoomInput");
+  if (modalInput) modalInput.value = code;
+
   if (!asSpectator) {
     const backup = getActiveRoomBackup(code);
-    if (backup && backup.myRole === "W") {
+    // Only resume as Host if the saved backup is for this exact code AND the same player name
+    if (
+      backup &&
+      backup.myRole === "W" &&
+      window.TavliDB.normalizeKey(backup.myPlayerName) === window.TavliDB.normalizeKey(myPlayerName)
+    ) {
       hostRoom(code, backup);
       return;
     }
@@ -1811,20 +1895,32 @@ function joinRoomWithCode(rawCode, asSpectator = false) {
   activeRoomCode = code;
   packetQueue = [];
   isProcessingPacket = false;
-  if (peer) peer.destroy();
+  if (conn) {
+    try { conn.close(); } catch (_) {}
+    conn = null;
+  }
+  if (peer) {
+    try { peer.destroy(); } catch (_) {}
+    peer = null;
+  }
 
-  peer = new Peer(PEER_CONFIG);
   myRole = asSpectator ? "SPECTATOR" : "B";
   document.getElementById("shareBtn").style.display = "inline-block";
 
   if (!asSpectator) {
     const backup = getActiveRoomBackup(code);
-    if (backup && backup.state) {
+    if (
+      backup &&
+      backup.state &&
+      backup.myRole === "B" &&
+      window.TavliDB.normalizeKey(backup.myPlayerName) === window.TavliDB.normalizeKey(myPlayerName)
+    ) {
       playerNames = cloneState(backup.playerNames || { W: "Host", B: myPlayerName });
       playerNames.B = myPlayerName;
       state = cloneState(backup.state);
       state.playerNames = { W: playerNames.W, B: playerNames.B };
     } else {
+      clearActiveRoomBackup();
       playerNames.B = myPlayerName;
       state.playerNames = { W: playerNames.W, B: playerNames.B };
     }
@@ -1834,18 +1930,55 @@ function joinRoomWithCode(rawCode, asSpectator = false) {
   render();
 
   document.getElementById("netStatus").textContent = t().connectingTo(code);
-  peer.on("open", () => {
-    conn = peer.connect("tavli-net-" + code, {
-      reliable: true,
-      metadata: {
-        role: asSpectator ? "SPECTATOR" : "B",
-        name: myPlayerName,
-        color: myChosenColor
+
+  const initiateConnectionAttempt = () => {
+    if (activeRoomCode !== code || (myRole !== "B" && myRole !== "SPECTATOR")) return;
+    if (!peer || peer.destroyed) return;
+    if (peer.disconnected) {
+      try { peer.reconnect(); } catch (_) {}
+      return;
+    }
+    try {
+      if (conn) {
+        try { conn.close(); } catch (_) {}
       }
-    });
-    setupClientConn(code, asSpectator);
+      conn = peer.connect("tavli-net-" + code, {
+        reliable: true,
+        metadata: {
+          role: asSpectator ? "SPECTATOR" : "B",
+          name: myPlayerName,
+          color: myChosenColor
+        }
+      });
+      setupClientConn(code, asSpectator);
+    } catch (_) {}
+  };
+
+  peer = new Peer(PEER_CONFIG);
+
+  peer.on("open", () => {
+    initiateConnectionAttempt();
   });
-  peer.on("disconnected", () => peer.reconnect());
+
+  peer.on("disconnected", () => {
+    if (peer && !peer.destroyed) {
+      try { peer.reconnect(); } catch (_) {}
+    }
+  });
+
+  peer.on("error", err => {
+    if (activeRoomCode !== code) return;
+    // If Host peer is still registering or network hiccuped, automatically retry connection in 2s
+    if (err && (err.type === "peer-unavailable" || err.type === "network" || err.type === "webrtc" || err.type === "server-error")) {
+      document.getElementById("netStatus").textContent = t().connectingTo(code);
+      if (clientConnectRetryTimer) clearTimeout(clientConnectRetryTimer);
+      clientConnectRetryTimer = setTimeout(() => {
+        if (activeRoomCode === code && (!conn || !conn.open)) {
+          initiateConnectionAttempt();
+        }
+      }, 2000);
+    }
+  });
 }
 
 function handleOpponentLeft() {
@@ -1940,7 +2073,8 @@ function setupIncomingHostConn(incomingConn, code) {
   };
 
   incomingConn.on("open", () => {
-    if (incomingConn.metadata && incomingConn.metadata.role === "SPECTATOR") {
+    if (!incomingConn.metadata) return;
+    if (incomingConn.metadata.role === "SPECTATOR") {
       registerSpectatorAndSendAck(incomingConn.metadata.name);
     }
   });
@@ -1954,6 +2088,14 @@ function setupIncomingHostConn(incomingConn, code) {
       }
       const cleanName = String(packet.name || "Friend").trim().slice(0, 16) || "Friend";
 
+      const isSamePlayerRetrying =
+        conn &&
+        conn !== incomingConn &&
+        window.TavliDB.normalizeKey(playerNames.B) === window.TavliDB.normalizeKey(cleanName);
+      if (isSamePlayerRetrying) {
+        try { conn.close(); } catch (_) {}
+        conn = null;
+      }
       const playerSlotTaken = (conn && conn.open && conn !== incomingConn && !isWaitingForReconnect);
       const isSpectatorConn = (packet.role === "SPECTATOR" || playerSlotTaken);
 
@@ -2065,6 +2207,27 @@ function setupIncomingHostConn(incomingConn, code) {
 function setupClientConn(code, asSpectator = false, isReconnectingAttempt = false) {
   let receivedAck = false;
 
+  if (clientConnectRetryTimer) clearTimeout(clientConnectRetryTimer);
+  clientConnectRetryTimer = setTimeout(() => {
+    if (!receivedAck && activeRoomCode === code && (myRole === "B" || myRole === "SPECTATOR")) {
+      // DataChannel didn't complete handshake within 4.5s — automatically re-dial Host peer
+      if (peer && !peer.destroyed && !peer.disconnected) {
+        try {
+          if (conn) { try { conn.close(); } catch (_) {} }
+          conn = peer.connect("tavli-net-" + code, {
+            reliable: true,
+            metadata: {
+              role: asSpectator ? "SPECTATOR" : "B",
+              name: myPlayerName,
+              color: myChosenColor
+            }
+          });
+          setupClientConn(code, asSpectator, isReconnectingAttempt);
+        } catch (_) {}
+      }
+    }
+  }, 4500);
+
   const sendHelloPacket = () => {
     if (!conn || !conn.open || receivedAck) return;
     const wasWaiting = isWaitingForReconnect;
@@ -2103,11 +2266,15 @@ function setupClientConn(code, asSpectator = false, isReconnectingAttempt = fals
 
   conn.on("close", () => {
     stopHelloRetry();
-    handleOpponentLeft();
+    if (receivedAck) {
+      handleOpponentLeft();
+    }
   });
   conn.on("error", () => {
     stopHelloRetry();
-    handleOpponentLeft();
+    if (receivedAck) {
+      handleOpponentLeft();
+    }
   });
 
   conn.on("data", packet => {
@@ -2563,11 +2730,6 @@ window.addEventListener("DOMContentLoaded", () => {
     selectGameMode(savedMode);
   }
 
-  const recentBackup = getActiveRoomBackup();
-  if (recentBackup && recentBackup.roomCode) {
-    document.getElementById("modalRoomInput").value = recentBackup.roomCode;
-  }
-
   if (typeof applyV21SettingsToDOM === "function") {
     applyV21SettingsToDOM();
   }
@@ -2583,7 +2745,12 @@ window.addEventListener("DOMContentLoaded", () => {
   if (roomFromUrl && roomFromUrl.trim().length === 6) {
     pendingRoomFromUrl = roomFromUrl.trim().toUpperCase();
     document.getElementById("modalRoomInput").value = pendingRoomFromUrl;
-    openPlaySetupModal("JOIN");
+    openPlaySetupModal("JOIN", pendingRoomFromUrl);
+  } else {
+    const recentBackup = getActiveRoomBackup();
+    if (recentBackup && recentBackup.roomCode) {
+      document.getElementById("modalRoomInput").value = recentBackup.roomCode;
+    }
   }
 });
 
