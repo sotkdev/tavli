@@ -1,4 +1,4 @@
-// Greek Tavli Online — UI, Auth, Modals, Global Messaging, V21 Settings, 3-Mode Custom Audio & Board Renderer (ui.js — v21)
+// e-Tavli — UI, Auth, Modals, Live Games Lobby, Autocomplete Player Messaging, V21/V22 Settings & Board Renderer (ui.js — v22)
 
 function t() {
   return I18N[myLang] || I18N.en;
@@ -447,6 +447,14 @@ function applyLanguageToUI() {
   document.getElementById("btnLogoutIdentity").textContent = tr.btnLogoutIdentity || "Logout";
   document.getElementById("hubBtnHost").textContent = tr.hubBtnHost;
   document.getElementById("hubBtnJoin").textContent = tr.hubBtnJoin;
+  const liveBtnEl = document.getElementById("hubBtnLiveGames");
+  if (liveBtnEl && tr.hubBtnLiveGames) liveBtnEl.textContent = tr.hubBtnLiveGames;
+  const liveTitleEl = document.getElementById("liveModalTitle");
+  if (liveTitleEl && tr.liveModalTitle) liveTitleEl.textContent = tr.liveModalTitle;
+  const liveRefreshEl = document.getElementById("liveRefreshBtn");
+  if (liveRefreshEl && tr.liveRefreshBtn) liveRefreshEl.textContent = tr.liveRefreshBtn;
+  const liveCloseEl = document.getElementById("liveCloseBtn");
+  if (liveCloseEl && tr.closeBtn) liveCloseEl.textContent = tr.closeBtn;
   document.getElementById("hubBtnSpectate").textContent = tr.hubBtnSpectate;
   document.getElementById("hubBtnAi").textContent = tr.hubBtnAi;
   const learnBtnEl = document.getElementById("hubBtnLearn");
@@ -867,10 +875,176 @@ function selectMessageThread(partnerName) {
   updateUnreadMessageBadges();
 }
 
-function startNewMessageThreadFromDropdown() {
-  const sel = document.getElementById("msgNewRecipientSelect");
-  if (!sel || !sel.value) return;
-  selectMessageThread(sel.value);
+// --- Version 22: Live Games Lobby Modal Functions ---
+async function openLiveGamesModal() {
+  if (!isAuthenticatedAccount && myStoreDetailsPref) {
+    const ok = await verifyIdentityOnLanding(false);
+    if (!ok) return;
+  }
+  const tr = t();
+  const statusEl = document.getElementById("liveSyncStatus");
+  if (statusEl && tr.liveSyncing) statusEl.textContent = tr.liveSyncing;
+  renderLiveGamesModalContent();
+  document.getElementById("liveGamesModal").style.display = "flex";
+
+  await window.TavliDB.pullFromServer();
+  if (statusEl && tr.liveSynced) statusEl.textContent = tr.liveSynced;
+  renderLiveGamesModalContent();
+}
+
+function closeLiveGamesModal() {
+  document.getElementById("liveGamesModal").style.display = "none";
+}
+
+async function refreshLiveGamesLobby() {
+  const tr = t();
+  const statusEl = document.getElementById("liveSyncStatus");
+  if (statusEl && tr.liveSyncing) statusEl.textContent = tr.liveSyncing;
+  await window.TavliDB.pullFromServer();
+  if (statusEl && tr.liveSynced) statusEl.textContent = tr.liveSynced;
+  renderLiveGamesModalContent();
+}
+
+function renderLiveGamesModalContent() {
+  const container = document.getElementById("liveGamesListContainer");
+  if (!container) return;
+  const tr = t();
+  const rooms = window.TavliDB.getLiveRooms ? window.TavliDB.getLiveRooms() : [];
+
+  if (rooms.length === 0) {
+    container.innerHTML = `<p style="font-size:0.86rem; color:#90a4ae; text-align:center; padding:18px;">${escapeHtml(tr.liveEmpty || "No live games right now.")}</p>`;
+    return;
+  }
+
+  let html = "";
+  rooms.forEach(rm => {
+    const code = escapeHtml(rm.roomCode);
+    const codeJs = escapeJsStr(rm.roomCode);
+    const hostName = rm.hostName || "Player 1";
+    const guestName = rm.guestName || "Player 2";
+    const isFull = (rm.playerCount >= 2);
+    const vName = (tr.variants && tr.variants[rm.variant]) ? tr.variants[rm.variant] : (rm.variant || "PORTES");
+    const specCount = Math.max(0, parseInt(rm.spectatorCount, 10) || 0);
+
+    const playersLine = isFull
+      ? (tr.livePlayers2 ? tr.livePlayers2(hostName, guestName) : `${hostName} vs ${guestName} (2/2)`)
+      : (tr.livePlayers1 ? tr.livePlayers1(hostName) : `${hostName} (1/2)`);
+
+    const scoreInfo = isFull
+      ? ` • Score: ${rm.scoreW || 0} - ${rm.scoreB || 0} (Target: ${rm.targetScore || 7})`
+      : ` • Target: ${rm.targetScore || 7}`;
+
+    const actionsHtml = isFull
+      ? `<button class="btn-sm" style="background:#00897b; color:#fff; padding:8px 14px;" onclick="handleLiveRoomAction('${codeJs}', 'SPECTATE')">${escapeHtml(tr.liveWatchBtn || "👁️ Spectate")}</button>`
+      : `<button class="btn-sm" style="background:var(--accent); color:#111; padding:8px 14px;" onclick="handleLiveRoomAction('${codeJs}', 'JOIN')">${escapeHtml(tr.liveJoinBtn || "🤝 Join as Player")}</button>
+         <button class="btn-sm" style="background:#00897b; color:#fff; padding:8px 14px;" onclick="handleLiveRoomAction('${codeJs}', 'SPECTATE')">${escapeHtml(tr.liveWatchBtn || "👁️ Spectate")}</button>`;
+
+    html += `
+      <div class="live-game-card">
+        <div class="live-game-info">
+          <div class="live-game-title">${escapeHtml(playersLine)}</div>
+          <div class="live-game-meta">
+            Room: <strong>${code}</strong> • ${escapeHtml(vName)}${escapeHtml(scoreInfo)} • 👁️ ${specCount}
+          </div>
+        </div>
+        <div class="live-game-actions">
+          ${actionsHtml}
+        </div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function handleLiveRoomAction(roomCode, actionMode) {
+  closeLiveGamesModal();
+  const cleanCode = String(roomCode || "").trim().toUpperCase();
+  const roomInput = document.getElementById("modalRoomInput");
+  if (roomInput) roomInput.value = cleanCode;
+
+  if (actionMode === "JOIN") {
+    // Open the Joining Player setup menu (with checker colour picker & room code pre-filled)
+    openPlaySetupModal("JOIN");
+    if (roomInput) roomInput.value = cleanCode;
+  } else {
+    // Spectate directly (or open spectate setup if guest auth needed)
+    if (!isAuthenticatedAccount && myStoreDetailsPref) {
+      openPlaySetupModal("SPECTATE");
+      if (roomInput) roomInput.value = cleanCode;
+    } else {
+      showScreen("GAME");
+      joinRoomWithCode(cleanCode, true);
+    }
+  }
+}
+
+// --- Version 22: Typing Field & Prefix Autocomplete for Player Messaging ---
+function handleMsgRecipientTyping() {
+  const input = document.getElementById("msgRecipientSearchInput");
+  const listEl = document.getElementById("msgRecipientAutocompleteList");
+  if (!input || !listEl) return;
+
+  const query = input.value.trim().toLowerCase();
+  if (!query) {
+    listEl.style.display = "none";
+    listEl.innerHTML = "";
+    return;
+  }
+
+  const myKey = window.TavliDB.normalizeKey(myPlayerName);
+  const allUsers = window.TavliDB.getAllUsers().filter(u => window.TavliDB.normalizeKey(u.name) !== myKey);
+
+  // Match users whose name starts with the typed characters first, followed by substring matches
+  const startsWithMatches = allUsers.filter(u => u.name.toLowerCase().startsWith(query));
+  const containsMatches = allUsers.filter(u => !u.name.toLowerCase().startsWith(query) && u.name.toLowerCase().includes(query));
+  const matches = [...startsWithMatches, ...containsMatches];
+
+  const tr = t();
+  if (matches.length === 0) {
+    listEl.innerHTML = `<div class="msg-autocomplete-item" style="color:#90a4ae; cursor:default;">${escapeHtml(tr.msgNoMatchUsers || "No matching players found")}</div>`;
+    listEl.style.display = "block";
+    return;
+  }
+
+  let itemsHtml = "";
+  matches.forEach(u => {
+    const safeJs = escapeJsStr(u.name);
+    itemsHtml += `
+      <div class="msg-autocomplete-item" onclick="selectTypedMessageRecipient('${safeJs}')">
+        <span>👤 <strong>${escapeHtml(u.name)}</strong></span>
+        <span style="font-size:0.72rem; color:var(--accent);">💬 ${escapeHtml(tr.msgStartChatBtn || "Chat")}</span>
+      </div>
+    `;
+  });
+
+  listEl.innerHTML = itemsHtml;
+  listEl.style.display = "block";
+}
+
+function selectTypedMessageRecipient(playerName) {
+  const input = document.getElementById("msgRecipientSearchInput");
+  const listEl = document.getElementById("msgRecipientAutocompleteList");
+  if (input) input.value = "";
+  if (listEl) listEl.style.display = "none";
+  selectMessageThread(playerName);
+}
+
+function startNewMessageThreadFromTypedInput() {
+  const input = document.getElementById("msgRecipientSearchInput");
+  if (!input) return;
+  const query = input.value.trim().toLowerCase();
+  if (!query) return;
+
+  const myKey = window.TavliDB.normalizeKey(myPlayerName);
+  const allUsers = window.TavliDB.getAllUsers().filter(u => window.TavliDB.normalizeKey(u.name) !== myKey);
+
+  const exact = allUsers.find(u => u.name.toLowerCase() === query);
+  const starts = allUsers.find(u => u.name.toLowerCase().startsWith(query));
+  const chosen = exact || starts;
+  if (chosen) {
+    selectTypedMessageRecipient(chosen.name);
+  }
 }
 
 function formatMessageTime(ts) {
@@ -930,12 +1104,6 @@ function renderMessagesModalContent() {
   }
 
   const activePartnerKey = window.TavliDB.normalizeKey(activeMessagePartner);
-  const allUsers = window.TavliDB.getAllUsers().filter(u => window.TavliDB.normalizeKey(u.name) !== myKey);
-
-  let recipientOptions = `<option value="">${escapeHtml(tr.msgNewRecipientPh)}</option>`;
-  allUsers.forEach(u => {
-    recipientOptions += `<option value="${escapeHtml(u.name)}">${escapeHtml(u.name)}</option>`;
-  });
 
   let threadsListHtml = "";
   if (threads.length === 0) {
@@ -1007,10 +1175,20 @@ function renderMessagesModalContent() {
 
   container.innerHTML = `
     <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
-      <select id="msgNewRecipientSelect" style="flex:1; padding:7px 10px; border-radius:7px; border:1px solid var(--wood-mid); background:#141414; color:#fff; font-size:0.82rem;">
-        ${recipientOptions}
-      </select>
-      <button class="btn-sm" style="padding:7px 12px;" onclick="startNewMessageThreadFromDropdown()">+ ${escapeHtml(tr.msgStartChatBtn)}</button>
+      <div class="msg-search-wrap">
+        <input
+          type="text"
+          id="msgRecipientSearchInput"
+          placeholder="${escapeHtml(tr.msgNewRecipientPh)}"
+          autocomplete="off"
+          style="width:100%; padding:8px 12px; border-radius:7px; border:1px solid var(--wood-mid); background:#141414; color:#fff; font-size:0.84rem; text-align:left;"
+          oninput="handleMsgRecipientTyping()"
+          onfocus="handleMsgRecipientTyping()"
+          onkeydown="if(event.key==='Enter') startNewMessageThreadFromTypedInput()"
+        />
+        <div class="msg-autocomplete-list" id="msgRecipientAutocompleteList"></div>
+      </div>
+      <button class="btn-sm" style="padding:8px 12px;" onclick="startNewMessageThreadFromTypedInput()">+ ${escapeHtml(tr.msgStartChatBtn)}</button>
     </div>
 
     <div class="msg-layout">

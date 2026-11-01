@@ -1,4 +1,4 @@
-// Greek Tavli Online — Bilingual Dictionary, V21 Settings State & Global Constants (i18n.js — v21)
+// e-Tavli — Bilingual Dictionary, V21/V22 Settings State, Live Games Lobby & Global Constants (i18n.js — v22)
 
 let myLang = "en";
 let myTheme = "classic";
@@ -61,7 +61,7 @@ let isWaitingForReconnect = false;
 
 const I18N = {
   en: {
-    landingMainTitle: "GREEK TAVLI ONLINE",
+    landingMainTitle: "e-Tavli",
     landingSubTitle: "Portes • Plakoto • Fevga — Authentic Greek Backgammon",
     lblIdentityHeader: "Enter your name / Login",
     btnVerifyIdentity: "Verify / Login",
@@ -70,6 +70,18 @@ const I18N = {
     guestBadge: name => `👤 Playing as Guest "${name}"`,
     hubBtnHost: "Host a Game Against a Friend",
     hubBtnJoin: "Join Friend's Game",
+    hubBtnLiveGames: "Live Games",
+    liveModalTitle: "🟢 Live Games Lobby",
+    liveSyncing: "🔄 Refreshing live games...",
+    liveSynced: "🌐 Live Rooms — Join 1-player rooms or Spectate 2-player matches",
+    liveEmpty: "No live games right now. Host a game to start a room!",
+    liveRefreshBtn: "🔄 Refresh",
+    livePlayers1: host => `👤 ${host} (Waiting for opponent — 1/2)`,
+    livePlayers2: (w, b) => `⚔️ ${w} vs ${b} (Playing — 2/2)`,
+    liveJoinBtn: "🤝 Join as Player",
+    liveWatchBtn: "👁️ Spectate",
+    msgNewRecipientPh: "Type a player's name to message...",
+    msgNoMatchUsers: "No matching players found",
     hubBtnSpectate: "Watch Game (Spectator)",
     hubBtnAi: "Play Against AI",
     hubBtnLearn: "Learn to Play (All 3 Games)",
@@ -141,7 +153,6 @@ const I18N = {
     msgModalTitle: "💬 Global Player Messages",
     msgLoginReq: "Please log in with your 4-digit PIN on the main menu to send and receive player messages.",
     msgConversationsHdr: "Conversations",
-    msgNewRecipientPh: "Select player to message...",
     msgStartChatBtn: "Chat",
     msgNoThreads: "No messages yet. Click any player on the Leaderboard or select a player above to start chatting!",
     msgSelectPrompt: "Select a conversation on the left to view or send messages.",
@@ -275,7 +286,7 @@ const I18N = {
     defaultPlayer: "Player"
   },
   el: {
-    landingMainTitle: "ΕΛΛΗΝΙΚΟ ΤΑΒΛΙ ONLINE",
+    landingMainTitle: "e-Tavli",
     landingSubTitle: "Πόρτες • Πλακωτό • Φεύγα — Αυθεντικό Ελληνικό Τάβλι",
     lblIdentityHeader: "Εισάγετε το όνομά σας / Σύνδεση",
     btnVerifyIdentity: "Σύνδεση / Επιβεβαίωση",
@@ -284,6 +295,18 @@ const I18N = {
     guestBadge: name => `👤 Επισκέπτης "${name}"`,
     hubBtnHost: "Δημιουργία Παιχνιδιού με Φίλο",
     hubBtnJoin: "Σύνδεση σε Παιχνίδι Φίλου",
+    hubBtnLiveGames: "Ζωντανά Παιχνίδια",
+    liveModalTitle: "🟢 Ζωντανά Παιχνίδια (Live)",
+    liveSyncing: "🔄 Ανανέωση ζωντανών παιχνιδιών...",
+    liveSynced: "🌐 Ενεργά Δωμάτια — Παίξτε (1/2 παίκτες) ή Παρακολουθήστε (2/2 παίκτες)",
+    liveEmpty: "Δεν υπάρχουν ενεργά παιχνίδια αυτή τη στιγμή. Δημιουργήστε ένα δωμάτιο!",
+    liveRefreshBtn: "🔄 Ανανέωση",
+    livePlayers1: host => `👤 ${host} (Αναμονή αντιπάλου — 1/2)`,
+    livePlayers2: (w, b) => `⚔️ ${w} εναντίον ${b} (Σε εξέλιξη — 2/2)`,
+    liveJoinBtn: "🤝 Συμμετοχή (Παίκτης)",
+    liveWatchBtn: "👁️ Παρακολούθηση",
+    msgNewRecipientPh: "Πληκτρολογήστε όνομα παίκτη...",
+    msgNoMatchUsers: "Δεν βρέθηκαν παίκτες",
     hubBtnSpectate: "Παρακολούθηση (Θεατής)",
     hubBtnAi: "Παιχνίδι Εναντίον AI",
     hubBtnLearn: "Μάθετε Τάβλι (Και τα 3 Παιχνίδια)",
@@ -355,7 +378,6 @@ const I18N = {
     msgModalTitle: "💬 Μηνύματα Παικτών",
     msgLoginReq: "Παρακαλώ συνδεθείτε με το 4-ψήφιο PIN σας στο αρχικό μενού για να στέλνετε και να λαμβάνετε μηνύματα.",
     msgConversationsHdr: "Συνομιλίες",
-    msgNewRecipientPh: "Επιλέξτε παίκτη...",
     msgStartChatBtn: "Συνομιλία",
     msgNoThreads: "Δεν υπάρχουν μηνύματα ακόμα. Πατήστε σε έναν παίκτη στην Κατάταξη ή επιλέξτε παίκτη παραπάνω!",
     msgSelectPrompt: "Επιλέξτε μια συνομιλία αριστερά για προβολή ή αποστολή μηνύματος.",

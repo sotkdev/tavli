@@ -1,18 +1,21 @@
-// Greek Tavli Online — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing & Global Messaging (database.js — v20)
+// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, Deduplicated Stats, Live Games Lobby & Global Messaging (database.js — v22)
 // Always points to: https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json
 
 const TAVLI_DB_STORAGE_KEY = "tavli_players_database_v1";
 const TAVLI_CLOUD_URL_KEY  = "tavli_cloud_server_url_v1";
 const TAVLI_HASH_SALT      = "GreekTavli_SHA256_Salt_2026_v2";
+const LIVE_ROOM_TTL_MS     = 3 * 60 * 1000; // 3 minutes TTL without heartbeat
 
 // PERMANENT FIREBASE REALTIME DATABASE ENDPOINT:
 const DEFAULT_CLOUD_ENDPOINT = "https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json";
 
 const INITIAL_TAVLI_DATABASE = {
-  version: 3,
+  version: 4,
   lastUpdated: Date.now(),
   users: {},
-  messages: []
+  messages: [],
+  liveRooms: {},
+  processedWinEvents: {}
 };
 
 window.TavliDB = {
@@ -45,6 +48,12 @@ window.TavliDB = {
         if (!Array.isArray(this.data.messages)) {
           this.data.messages = [];
         }
+        if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") {
+          this.data.liveRooms = {};
+        }
+        if (!this.data.processedWinEvents || typeof this.data.processedWinEvents !== "object") {
+          this.data.processedWinEvents = {};
+        }
       } catch (e) {
         this.data = JSON.parse(JSON.stringify(INITIAL_TAVLI_DATABASE));
       }
@@ -62,6 +71,27 @@ window.TavliDB = {
   sanitizeAllStatsConsistency() {
     if (!this.data || !this.data.users) return;
     if (!Array.isArray(this.data.messages)) this.data.messages = [];
+    if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") this.data.liveRooms = {};
+    if (!this.data.processedWinEvents || typeof this.data.processedWinEvents !== "object") this.data.processedWinEvents = {};
+
+    // Prune stale live rooms older than LIVE_ROOM_TTL_MS
+    const now = Date.now();
+    Object.keys(this.data.liveRooms).forEach(code => {
+      const rm = this.data.liveRooms[code];
+      if (!rm || !rm.roomCode || rm.closed || (now - (rm.updatedAt || 0) > LIVE_ROOM_TTL_MS)) {
+        delete this.data.liveRooms[code];
+      }
+    });
+
+    // Keep processedWinEvents bounded to last 500 entries
+    const evKeys = Object.keys(this.data.processedWinEvents);
+    if (evKeys.length > 500) {
+      evKeys
+        .sort((a, b) => (this.data.processedWinEvents[a] || 0) - (this.data.processedWinEvents[b] || 0))
+        .slice(0, evKeys.length - 500)
+        .forEach(k => delete this.data.processedWinEvents[k]);
+    }
+
     Object.values(this.data.users).forEach(u => {
       if (!u || !u.stats) return;
       const s = u.stats;
@@ -277,8 +307,42 @@ window.TavliDB = {
     });
 
     const merged = Array.from(byId.values()).sort((a, b) => (a.ts || 0) - (b.ts || 0));
-    // Keep up to 400 recent messages so the DB stays lightweight
     this.data.messages = merged.slice(-400);
+  },
+
+  mergeLiveRoomsMap(remoteRooms) {
+    if (!remoteRooms || typeof remoteRooms !== "object") return;
+    if (!this.data) this.init();
+    if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") {
+      this.data.liveRooms = {};
+    }
+
+    const now = Date.now();
+    Object.entries(remoteRooms).forEach(([code, remRoom]) => {
+      if (!remRoom || !code) return;
+      const cleanCode = String(code).trim().toUpperCase();
+      const locRoom = this.data.liveRooms[cleanCode];
+      const remTime = Number(remRoom.updatedAt) || 0;
+      const locTime = locRoom ? (Number(locRoom.updatedAt) || 0) : 0;
+
+      if (remRoom.closed) {
+        if (!locRoom || remTime >= locTime) {
+          delete this.data.liveRooms[cleanCode];
+        }
+        return;
+      }
+
+      if (now - remTime > LIVE_ROOM_TTL_MS) {
+        if (locRoom && (now - locTime > LIVE_ROOM_TTL_MS)) {
+          delete this.data.liveRooms[cleanCode];
+        }
+        return;
+      }
+
+      if (!locRoom || remTime >= locTime) {
+        this.data.liveRooms[cleanCode] = JSON.parse(JSON.stringify(remRoom));
+      }
+    });
   },
 
   async mergeFullDatabase(remoteDB, saveToLocal = true) {
@@ -335,7 +399,87 @@ window.TavliDB = {
       this.mergeMessagesList(remoteDB.messages);
     }
 
+    if (remoteDB.liveRooms && typeof remoteDB.liveRooms === "object") {
+      this.mergeLiveRoomsMap(remoteDB.liveRooms);
+    }
+
+    if (remoteDB.processedWinEvents && typeof remoteDB.processedWinEvents === "object") {
+      if (!this.data.processedWinEvents) this.data.processedWinEvents = {};
+      Object.entries(remoteDB.processedWinEvents).forEach(([evId, ts]) => {
+        if (evId && !this.data.processedWinEvents[evId]) {
+          this.data.processedWinEvents[evId] = Number(ts) || Date.now();
+        }
+      });
+    }
+
     if (saveToLocal) this.saveLocalOnly();
+  },
+
+  // --- Version 22: Live Games Lobby Registry ---
+  async upsertLiveRoom(roomInfo) {
+    if (!roomInfo || !roomInfo.roomCode) return false;
+    if (!this.data) this.init();
+    if (!this.data.liveRooms) this.data.liveRooms = {};
+
+    const code = String(roomInfo.roomCode).trim().toUpperCase();
+    this.data.liveRooms[code] = {
+      roomCode: code,
+      hostName: String(roomInfo.hostName || "Player 1").trim().slice(0, 16),
+      guestName: roomInfo.guestName ? String(roomInfo.guestName).trim().slice(0, 16) : null,
+      playerCount: roomInfo.playerCount === 2 ? 2 : 1,
+      spectatorCount: Math.max(0, parseInt(roomInfo.spectatorCount, 10) || 0),
+      variant: String(roomInfo.variant || "PORTES"),
+      gameMode: String(roomInfo.gameMode || "FULL"),
+      targetScore: parseInt(roomInfo.targetScore, 10) || 7,
+      scoreW: parseInt(roomInfo.scoreW, 10) || 0,
+      scoreB: parseInt(roomInfo.scoreB, 10) || 0,
+      updatedAt: Date.now(),
+      closed: false
+    };
+
+    return this.save();
+  },
+
+  async removeLiveRoom(roomCode) {
+    if (!roomCode) return false;
+    if (!this.data) this.init();
+    const code = String(roomCode).trim().toUpperCase();
+    if (!this.data.liveRooms) this.data.liveRooms = {};
+    delete this.data.liveRooms[code];
+    this.saveLocalOnly();
+
+    // Also explicitly delete the room node from Firebase so remote merges don't resurrect it
+    const baseUrl = this.getCloudUrl();
+    if (baseUrl && baseUrl.endsWith("/tavli_db.json")) {
+      const roomEndpoint = baseUrl.replace(/\/tavli_db\.json$/, `/tavli_db/liveRooms/${encodeURIComponent(code)}.json`);
+      try {
+        await fetch(roomEndpoint, { method: "DELETE" });
+      } catch (_) {}
+    }
+    return this.save();
+  },
+
+  getLiveRooms() {
+    if (!this.data) this.init();
+    if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") return [];
+    const now = Date.now();
+    const active = [];
+    Object.entries(this.data.liveRooms).forEach(([code, rm]) => {
+      if (!rm || rm.closed) return;
+      if (now - (rm.updatedAt || 0) <= LIVE_ROOM_TTL_MS) {
+        active.push(rm);
+      } else {
+        delete this.data.liveRooms[code];
+      }
+    });
+    // Sort open 1-player rooms first, then newest updated
+    active.sort((a, b) => {
+      if ((a.playerCount || 1) !== (b.playerCount || 1)) {
+        return (a.playerCount || 1) - (b.playerCount || 1);
+      }
+      return (b.updatedAt || 0) - (a.updatedAt || 0);
+    });
+    return active;
   },
 
   normalizeKey(name) {
@@ -621,9 +765,47 @@ window.TavliDB = {
     return user.stats.opponents[oppKey];
   },
 
-  recordGameOutcome(playerName, opponentName, variant, didWin) {
-    if (this.isAiPlayerName(playerName) || this.isAiPlayerName(opponentName)) return;
+  // --- Version 22: Idempotent, Single-Increment Game & Set Outcome Recording ---
+  // Guarantees 100% that:
+  // 1. Winning 1 game (whether Moni +1 or Diplo +2) ALWAYS adds +1 game win / +1 game loss.
+  // 2. Winning a set (even when exceeding the target score, e.g., winning Diplo on a 1-game set or 8 pts on a 7-game set) ALWAYS adds +1 set win / +1 set loss.
+  // 3. Each unique winEv.id is processed AT MOST ONCE across local and remote syncs.
+  recordWinEventOnce(winEv) {
+    if (!winEv || !winEv.id) return false;
     if (!this.data) this.init();
+    if (!this.data.processedWinEvents) this.data.processedWinEvents = {};
+
+    const evId = String(winEv.id);
+    if (this.data.processedWinEvents[evId]) {
+      return false; // Already recorded!
+    }
+
+    const wName = String(winEv.nameW || "Player 1").trim();
+    const bName = String(winEv.nameB || "Player 2").trim();
+    if (this.isAiPlayerName(wName) || this.isAiPlayerName(bName)) return false;
+
+    this.data.processedWinEvents[evId] = Date.now();
+
+    const wWon = winEv.winner === "W";
+    const variant = winEv.variant || "PORTES";
+
+    // Always increment by exactly 1 game (even if Diplo +2 pts)
+    if (!winEv.forfeitSetOnly) {
+      this._applySingleGameIncrement(wName, bName, variant, wWon);
+      this._applySingleGameIncrement(bName, wName, variant, !wWon);
+    }
+
+    // Always increment by exactly 1 set when the set is won (even if points exceed targetScore)
+    if (winEv.matchOver) {
+      this._applySingleSetIncrement(wName, bName, wWon);
+      this._applySingleSetIncrement(bName, wName, !wWon);
+    }
+
+    this.save();
+    return true;
+  },
+
+  _applySingleGameIncrement(playerName, opponentName, variant, didWin) {
     const user = this.getUser(playerName);
     if (!user) return;
 
@@ -652,12 +834,9 @@ window.TavliDB = {
     oppRec.gamesPlayed = (oppRec.gamesWon || 0) + (oppRec.gamesLost || 0);
 
     user.updatedAt = Date.now();
-    this.save();
   },
 
-  recordSetOutcome(playerName, opponentName, didWin) {
-    if (this.isAiPlayerName(playerName) || this.isAiPlayerName(opponentName)) return;
-    if (!this.data) this.init();
+  _applySingleSetIncrement(playerName, opponentName, didWin) {
     const user = this.getUser(playerName);
     if (!user) return;
 
@@ -677,10 +856,23 @@ window.TavliDB = {
     oppRec.setsPlayed = (oppRec.setsWon || 0) + (oppRec.setsLost || 0);
 
     user.updatedAt = Date.now();
+  },
+
+  recordGameOutcome(playerName, opponentName, variant, didWin) {
+    if (this.isAiPlayerName(playerName) || this.isAiPlayerName(opponentName)) return;
+    if (!this.data) this.init();
+    this._applySingleGameIncrement(playerName, opponentName, variant, didWin);
     this.save();
   },
 
-  // --- Global Player-to-Player Messaging System (v20) ---
+  recordSetOutcome(playerName, opponentName, didWin) {
+    if (this.isAiPlayerName(playerName) || this.isAiPlayerName(opponentName)) return;
+    if (!this.data) this.init();
+    this._applySingleSetIncrement(playerName, opponentName, didWin);
+    this.save();
+  },
+
+  // --- Global Player-to-Player Messaging System ---
   async sendMessageAsync(fromName, toName, rawText) {
     if (!this.data) this.init();
     if (!Array.isArray(this.data.messages)) this.data.messages = [];
@@ -864,7 +1056,9 @@ window.TavliDB = {
     });
     return {
       users: snapshot,
-      messages: Array.isArray(this.data.messages) ? this.data.messages.slice(-200) : []
+      messages: Array.isArray(this.data.messages) ? this.data.messages.slice(-200) : [],
+      liveRooms: this.data.liveRooms || {},
+      processedWinEvents: this.data.processedWinEvents || {}
     };
   },
 
@@ -891,10 +1085,15 @@ window.TavliDB = {
           localUser.pinHash = remUser.pinHash;
           changed = true;
         }
-        if ((remUser.updatedAt || 0) > (localUser.updatedAt || 0)) {
+        const remGames = ((remUser.stats && remUser.stats.gamesWon) || 0) + ((remUser.stats && remUser.stats.gamesLost) || 0);
+        const locGames = ((localUser.stats && localUser.stats.gamesWon) || 0) + ((localUser.stats && localUser.stats.gamesLost) || 0);
+        const remSets  = ((remUser.stats && remUser.stats.setsWon) || 0) + ((remUser.stats && remUser.stats.setsLost) || 0);
+        const locSets  = ((localUser.stats && localUser.stats.setsWon) || 0) + ((localUser.stats && localUser.stats.setsLost) || 0);
+
+        if ((remUser.updatedAt || 0) > (localUser.updatedAt || 0) || remGames > locGames || remSets > locSets) {
           localUser.stats = remUser.stats;
           localUser.name = remUser.name;
-          localUser.updatedAt = remUser.updatedAt;
+          localUser.updatedAt = Math.max(remUser.updatedAt || 0, localUser.updatedAt || 0);
           changed = true;
         }
       }
@@ -904,6 +1103,20 @@ window.TavliDB = {
       const beforeLen = (this.data.messages || []).length;
       this.mergeMessagesList(remoteSnapshot.messages);
       if ((this.data.messages || []).length !== beforeLen) changed = true;
+    }
+
+    if (remoteSnapshot.liveRooms && typeof remoteSnapshot.liveRooms === "object") {
+      this.mergeLiveRoomsMap(remoteSnapshot.liveRooms);
+    }
+
+    if (remoteSnapshot.processedWinEvents && typeof remoteSnapshot.processedWinEvents === "object") {
+      if (!this.data.processedWinEvents) this.data.processedWinEvents = {};
+      Object.entries(remoteSnapshot.processedWinEvents).forEach(([evId, ts]) => {
+        if (evId && !this.data.processedWinEvents[evId]) {
+          this.data.processedWinEvents[evId] = Number(ts) || Date.now();
+          changed = true;
+        }
+      });
     }
 
     if (changed) this.save();
@@ -930,6 +1143,8 @@ window.TavliDB = {
       }
       this.data = parsed;
       if (!Array.isArray(this.data.messages)) this.data.messages = [];
+      if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") this.data.liveRooms = {};
+      if (!this.data.processedWinEvents || typeof this.data.processedWinEvents !== "object") this.data.processedWinEvents = {};
       this.sanitizeAllStatsConsistency();
       await this.migrateLegacyPlaintextPins();
       await this.save(true);

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>Greek Tavli Online</title>
+  <title>e-Tavli</title>
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#3e2723" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -291,18 +291,92 @@
       border-color: var(--accent);
       filter: brightness(1.12);
     }
-    .hub-btn-primary.highlight-host {
-      background: linear-gradient(135deg, var(--accent), #f57c00);
-      color: #111;
-      border-color: #ffe082;
+    /* Version 22: All Main Menu primary buttons share the exact same colour */
+    .hub-btn-primary.highlight-host,
+    .hub-btn-primary.spectate-btn,
+    .hub-btn-primary.learn-btn,
+    .hub-btn-primary.live-btn {
+      background: linear-gradient(135deg, var(--wood-mid), rgba(0,0,0,0.45));
+      color: #fff;
+      border-color: rgba(255,255,255,0.12);
     }
-    .hub-btn-primary.spectate-btn {
-      background: linear-gradient(135deg, #00897b, #004d40);
-      border-color: #4db6ac;
+
+    /* Version 22: Live Games Lobby Cards & Player Search Autocomplete Dropdown */
+    .live-games-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin: 10px 0;
+      max-height: 55dvh;
+      overflow-y: auto;
     }
-    .hub-btn-primary.learn-btn {
-      background: linear-gradient(135deg, #3949ab, #1a237e);
-      border-color: #7986cb;
+    .live-game-card {
+      background: rgba(0,0,0,0.35);
+      border: 1px solid var(--wood-mid);
+      border-radius: 10px;
+      padding: 12px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .live-game-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      text-align: left;
+    }
+    .live-game-title {
+      font-size: 0.9rem;
+      font-weight: 800;
+      color: var(--accent);
+    }
+    .live-game-meta {
+      font-size: 0.76rem;
+      color: #ffecb3;
+    }
+    .live-game-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .msg-search-wrap {
+      position: relative;
+      flex: 1;
+    }
+    .msg-autocomplete-list {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      background: #181818;
+      border: 1px solid var(--accent);
+      border-radius: 8px;
+      max-height: 190px;
+      overflow-y: auto;
+      z-index: 250;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.85);
+      display: none;
+    }
+    .msg-autocomplete-item {
+      padding: 8px 12px;
+      font-size: 0.82rem;
+      color: #fff;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      text-align: left;
+    }
+    .msg-autocomplete-item:last-child {
+      border-bottom: none;
+    }
+    .msg-autocomplete-item:hover {
+      background: rgba(255,179,0,0.22);
+      color: var(--accent);
     }
     .hub-secondary-grid {
       display: grid;
@@ -316,9 +390,9 @@
     .hub-btn-sec {
       padding: 10px 6px;
       border-radius: 10px;
-      border: 1px solid var(--wood-mid);
-      background: rgba(0,0,0,0.35);
-      color: #ffecb3;
+      border: 2px solid rgba(255,255,255,0.12);
+      background: linear-gradient(135deg, var(--wood-mid), rgba(0,0,0,0.45));
+      color: #fff;
       font-weight: 800;
       font-size: 0.8rem;
       cursor: pointer;
@@ -1058,7 +1132,7 @@
   <div class="landing-screen" id="landingPage">
     <div class="landing-container">
       <div class="landing-header">
-        <div class="landing-title" id="landingMainTitle">GREEK TAVLI ONLINE</div>
+        <div class="landing-title" id="landingMainTitle">e-Tavli</div>
         <div class="landing-subtitle" id="landingSubTitle">Portes • Plakoto • Fevga — Authentic Greek Backgammon</div>
       </div>
 
@@ -1089,7 +1163,7 @@
       <!-- Main Menu Buttons (Left) + Designed Backgammon Artwork (Right) -->
       <div class="hub-split">
         <div class="hub-menu-col">
-          <button class="hub-btn-primary highlight-host" onclick="openPlaySetupModal('HOST')">
+          <button class="hub-btn-primary" onclick="openPlaySetupModal('HOST')">
             <span>🎲 <span id="hubBtnHost">Host a Game Against a Friend</span></span>
             <span>➔</span>
           </button>
@@ -1099,7 +1173,12 @@
             <span>➔</span>
           </button>
 
-          <button class="hub-btn-primary spectate-btn" onclick="openPlaySetupModal('SPECTATE')">
+          <button class="hub-btn-primary" onclick="openLiveGamesModal()">
+            <span>🟢 <span id="hubBtnLiveGames">Live Games</span></span>
+            <span>➔</span>
+          </button>
+
+          <button class="hub-btn-primary" onclick="openPlaySetupModal('SPECTATE')">
             <span>👁️ <span id="hubBtnSpectate">Watch Game (Spectator)</span></span>
             <span>➔</span>
           </button>
@@ -1109,7 +1188,7 @@
             <span>➔</span>
           </button>
 
-          <button class="hub-btn-primary learn-btn" onclick="startInteractiveTutorial()">
+          <button class="hub-btn-primary" onclick="startInteractiveTutorial()">
             <span>🎓 <span id="hubBtnLearn">Learn to Play (All 3 Games)</span></span>
             <span>➔</span>
           </button>
@@ -1274,6 +1353,19 @@
         <button class="btn-back-cancel" id="btnConfigBack" onclick="closePlayConfigModal()">Back</button>
         <button class="btn-primary-start" id="modalSubmitBtn" onclick="confirmStartSelectedMode()">Start Game</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 1b. Live Games Lobby Pop-Up Modal (Version 22) -->
+  <div class="modal-overlay" id="liveGamesModal" style="display:none;">
+    <div class="modal-card wide-modal">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <h2 id="liveModalTitle" style="margin-bottom:0;">🟢 Live Games Lobby</h2>
+        <button class="btn-sm" id="liveRefreshBtn" onclick="refreshLiveGamesLobby()">🔄 Refresh</button>
+      </div>
+      <div id="liveSyncStatus" style="font-size:0.74rem; color:#81c784; text-align:center; margin-bottom:8px;">🌐 Live Rooms — Join 1-player rooms or Spectate 2-player matches</div>
+      <div class="live-games-list" id="liveGamesListContainer"></div>
+      <button class="modal-close-btn" id="liveCloseBtn" onclick="closeLiveGamesModal()">Back / Close</button>
     </div>
   </div>
 
@@ -1590,7 +1682,7 @@
   </div>
 
   <!-- Small Version Label at Bottom-Right -->
-  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v21</div>
+  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v22</div>
 
   <script src="i18n.js"></script>
   <script src="tutorial.js"></script>

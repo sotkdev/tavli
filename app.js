@@ -1,4 +1,4 @@
-// Greek Tavli Online — Core Game Engine, Fevga Rules, AI, Spectator Handshake Fix, Tutorial, Global Messaging, V21 Animation Speeds & WebRTC Multiplayer (app.js — v21)
+// e-Tavli — Core Game Engine, Fevga Rules, AI, Live Games Lobby Sync, Single-Increment Stats Guarantee, Tutorial, Global Messaging & WebRTC Multiplayer (app.js — v22)
 
 const PEER_CONFIG = {
   config: {
@@ -84,6 +84,47 @@ function stopHelloRetry() {
   if (helloRetryTimer) {
     clearInterval(helloRetryTimer);
     helloRetryTimer = null;
+  }
+}
+
+let liveRoomHeartbeatTimer = null;
+
+function publishHostLiveRoomStatus() {
+  if (myRole !== "W" || isAiMatch || isTutorialMode || !activeRoomCode) return;
+  if (state.phase === "SET_OVER") {
+    window.TavliDB.removeLiveRoom(activeRoomCode);
+    return;
+  }
+  const hasSecondPlayer = Boolean(conn && conn.open && !isWaitingForReconnect);
+  window.TavliDB.upsertLiveRoom({
+    roomCode: activeRoomCode,
+    hostName: playerNames.W || myPlayerName || "Player 1",
+    guestName: hasSecondPlayer ? (playerNames.B || "Player 2") : null,
+    playerCount: hasSecondPlayer ? 2 : 1,
+    spectatorCount: spectatorConns ? spectatorConns.filter(sc => sc && sc.open).length : 0,
+    variant: currentVariant(),
+    gameMode: myGameModePref || "FULL",
+    targetScore: state.targetScore || 7,
+    scoreW: state.scoreW || 0,
+    scoreB: state.scoreB || 0
+  });
+}
+
+function startHostLiveRoomHeartbeat() {
+  stopHostLiveRoomHeartbeat();
+  publishHostLiveRoomStatus();
+  liveRoomHeartbeatTimer = setInterval(() => {
+    publishHostLiveRoomStatus();
+  }, 25000);
+}
+
+function stopHostLiveRoomHeartbeat(removeRoom = false) {
+  if (liveRoomHeartbeatTimer) {
+    clearInterval(liveRoomHeartbeatTimer);
+    liveRoomHeartbeatTimer = null;
+  }
+  if (removeRoom && activeRoomCode && myRole === "W") {
+    window.TavliDB.removeLiveRoom(activeRoomCode);
   }
 }
 
@@ -332,19 +373,23 @@ function recordWinEventToDatabase(winEv) {
   playerNames.W = wName;
   playerNames.B = bName;
 
-  const wWon = winEv.winner === "W";
+  // Idempotent single-increment recording:
+  // - Always +1 game win / +1 game loss per game (regardless of Moni +1 or Diplo +2)
+  // - Always +1 set win / +1 set loss per set (regardless of exceeding targetScore)
+  // - Deduplicated by winEv.id in TavliDB so P2P & Firebase merges never double-count
+  const recorded = window.TavliDB.recordWinEventOnce({
+    id: winEv.id,
+    winner: winEv.winner,
+    nameW: wName,
+    nameB: bName,
+    variant: winEv.variant,
+    matchOver: Boolean(winEv.matchOver),
+    forfeitSetOnly: Boolean(winEv.forfeitSetOnly)
+  });
 
-  if (!winEv.forfeitSetOnly) {
-    window.TavliDB.recordGameOutcome(wName, bName, winEv.variant, wWon);
-    window.TavliDB.recordGameOutcome(bName, wName, winEv.variant, !wWon);
+  if (recorded) {
+    syncDatabaseWithPeer();
   }
-
-  if (winEv.matchOver) {
-    window.TavliDB.recordSetOutcome(wName, bName, wWon);
-    window.TavliDB.recordSetOutcome(bName, wName, !wWon);
-  }
-
-  syncDatabaseWithPeer();
 }
 
 function updateHeaderLabels() {
@@ -1221,6 +1266,7 @@ function handleEndTurn(forcedOrAuto = false) {
 }
 
 function finishGame(winner, pts, reason, winningMoveAnim = null) {
+  if (state.phase === "SET_OVER") return;
   playWinFanfare();
   const playedVariant = currentVariant();
   turnHistory = [];
@@ -1274,6 +1320,7 @@ function finishGame(winner, pts, reason, winningMoveAnim = null) {
     state.lastMoveAnim = winningMoveAnim;
     state.lastWinEvent = winEv;
 
+    publishHostLiveRoomStatus();
     syncState();
     render();
     showSetVictoryModal(summaryObj);
@@ -1283,6 +1330,7 @@ function finishGame(winner, pts, reason, winningMoveAnim = null) {
     state.lastAction = "WIN";
     state.lastMoveAnim = winningMoveAnim;
     state.lastWinEvent = winEv;
+    publishHostLiveRoomStatus();
     syncState();
     render();
   }
@@ -1499,7 +1547,10 @@ function startNewSetWithSameSettings() {
   state.variantIdx = 0;
   resetSetTracking();
   initGame("ROLL_OFF");
-  if (myRole === "W") syncState();
+  if (myRole === "W") {
+    publishHostLiveRoomStatus();
+    syncState();
+  }
 }
 
 function handlePlayAgainSameSettings() {
@@ -1521,6 +1572,7 @@ function handlePlayAgainSameSettings() {
 
 function handleExitToInitialMenu(notifyPeer = true) {
   stopHelloRetry();
+  stopHostLiveRoomHeartbeat(true);
   stopDisconnectCountdown();
   clearActiveRoomBackup();
   isTutorialMode = false;
@@ -1675,6 +1727,7 @@ function broadcastSpectatorCountFromHost() {
   const count = spectatorConns.length;
   updateSpectatorBadge(count);
   broadcastFromHostToAll({ type: "SPECTATOR_COUNT", count });
+  publishHostLiveRoomStatus();
 }
 
 function hostRoom(reconnectingCode = null, restoredBackup = null) {
@@ -1724,6 +1777,7 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
   }
 
   peer.on("open", () => {
+    startHostLiveRoomHeartbeat();
     if (!restoredBackup) shareInviteLink(code);
   });
 
@@ -1800,6 +1854,7 @@ function handleOpponentLeft() {
   isWaitingForReconnect = true;
 
   saveActiveRoomBackup();
+  publishHostLiveRoomStatus();
 
   const oppName = myRole === "W" ? playerNames.B : playerNames.W;
   const tr = t();
@@ -1939,6 +1994,7 @@ function setupIncomingHostConn(incomingConn, code) {
         }
         state.playerNames = { W: playerNames.W, B: playerNames.B };
         updateHeaderLabels();
+        publishHostLiveRoomStatus();
         appendChatLine(t().sysLabel, t().oppRejoinedChat(cleanName), "SYS");
         setStatus(t().oppRejoinedStatus(cleanName));
         saveActiveRoomBackup();
@@ -1960,6 +2016,7 @@ function setupIncomingHostConn(incomingConn, code) {
       }
 
       updateHeaderLabels();
+      publishHostLiveRoomStatus();
       appendChatLine(t().sysLabel, t().joinedTableChat(cleanName), "SYS");
 
       state.scoreW = 0;
@@ -2322,6 +2379,9 @@ function processNextStatePacket() {
 
 function notifyLeavingTab() {
   saveActiveRoomBackup();
+  if (myRole === "W" && activeRoomCode && (!conn || !conn.open || state.phase === "SET_OVER")) {
+    window.TavliDB.removeLiveRoom(activeRoomCode);
+  }
   if (conn && conn.open) {
     try { conn.send({ type: "BYE" }); } catch (_) {}
     try { conn.close(); } catch (_) {}
@@ -2421,8 +2481,8 @@ function shareInviteLink(code) {
   const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${code}`;
   if (navigator.share) {
     navigator.share({
-      title: "Greek Tavli Online",
-      text: `Join or Watch my Greek Tavli match (Room ${code}):`,
+      title: "e-Tavli",
+      text: `Join or Watch my e-Tavli match (Room ${code}):`,
       url: inviteUrl
     }).catch(() => {});
   } else if (navigator.clipboard) {
@@ -2440,6 +2500,10 @@ window.addEventListener("DOMContentLoaded", () => {
     }
     if (document.getElementById("leaderboardModal").style.display === "flex") {
       renderLeaderboardModalContent();
+    }
+    const liveModal = document.getElementById("liveGamesModal");
+    if (liveModal && liveModal.style.display === "flex" && typeof renderLiveGamesModalContent === "function") {
+      renderLiveGamesModalContent();
     }
     if (document.getElementById("profileModal").style.display === "flex") {
       renderProfileModalContent();

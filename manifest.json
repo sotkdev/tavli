@@ -1,7 +1,7 @@
 {
-  "name": "Greek Tavli Online",
-  "short_name": "Tavli",
-  "description": "Greek Tavli Match (Portes, Plakoto, Fevga) with Hardware CSPRNG Dice, AI, Global Server Leaderboard and P2P Multiplayer",
+  "name": "e-Tavli",
+  "short_name": "e-Tavli",
+  "description": "e-Tavli — Greek Tavli Match (Portes, Plakoto, Fevga) with Hardware CSPRNG Dice, AI, Live Games Lobby, Global Server Leaderboard and P2P Multiplayer",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "landscape",
