@@ -415,6 +415,66 @@ window.TavliDB = {
     if (saveToLocal) this.saveLocalOnly();
   },
 
+  getSubPathUrl(subPath) {
+    const base = this.getCloudUrl();
+    if (!base || !base.endsWith(".json")) return null;
+    const cleanSub = String(subPath || "").replace(/^\/+|\/+$/g, "");
+    return base.replace(/\.json$/, `/${cleanSub}.json`);
+  },
+
+  async pushRoomSignalPacket(roomCode, targetRole, packet) {
+    const code = String(roomCode || "").trim().toUpperCase();
+    if (!code || !targetRole || !packet) return false;
+    const url = this.getSubPathUrl(`roomSignals/${encodeURIComponent(code)}/${encodeURIComponent(targetRole)}`);
+    if (!url) return false;
+    const envelope = {
+      id: Date.now() + "-" + Math.floor(Math.random() * 1000000),
+      ts: Date.now(),
+      packet
+    };
+    try {
+      const res = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(envelope)
+      });
+      return res.ok;
+    } catch (_) {
+      return false;
+    }
+  },
+
+  async pullRoomSignalPacket(roomCode, myTargetRole) {
+    const code = String(roomCode || "").trim().toUpperCase();
+    if (!code || !myTargetRole) return null;
+    const url = this.getSubPathUrl(`roomSignals/${encodeURIComponent(code)}/${encodeURIComponent(myTargetRole)}`);
+    if (!url) return null;
+    try {
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { "Accept": "application/json" },
+        cache: "no-store"
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch (_) {
+      return null;
+    }
+  },
+
+  async clearRoomSignalPackets(roomCode) {
+    const code = String(roomCode || "").trim().toUpperCase();
+    if (!code) return false;
+    const url = this.getSubPathUrl(`roomSignals/${encodeURIComponent(code)}`);
+    if (!url) return false;
+    try {
+      await fetch(url, { method: "DELETE" });
+      return true;
+    } catch (_) {
+      return false;
+    }
+  },
+
   // --- Version 22: Live Games Lobby Registry ---
   async upsertLiveRoom(roomInfo) {
     if (!roomInfo || !roomInfo.roomCode) return false;
@@ -422,7 +482,7 @@ window.TavliDB = {
     if (!this.data.liveRooms) this.data.liveRooms = {};
 
     const code = String(roomInfo.roomCode).trim().toUpperCase();
-    this.data.liveRooms[code] = {
+    const entry = {
       roomCode: code,
       hostName: String(roomInfo.hostName || "Player 1").trim().slice(0, 16),
       guestName: roomInfo.guestName ? String(roomInfo.guestName).trim().slice(0, 16) : null,
@@ -436,7 +496,20 @@ window.TavliDB = {
       updatedAt: Date.now(),
       closed: false
     };
+    this.data.liveRooms[code] = entry;
+    this.saveLocalOnly();
 
+    const subUrl = this.getSubPathUrl(`liveRooms/${encodeURIComponent(code)}`);
+    if (subUrl) {
+      try {
+        const res = await fetch(subUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(entry)
+        });
+        if (res.ok) return true;
+      } catch (_) {}
+    }
     return this.save();
   },
 
@@ -448,15 +521,14 @@ window.TavliDB = {
     delete this.data.liveRooms[code];
     this.saveLocalOnly();
 
-    // Also explicitly delete the room node from Firebase so remote merges don't resurrect it
-    const baseUrl = this.getCloudUrl();
-    if (baseUrl && baseUrl.endsWith("/tavli_db.json")) {
-      const roomEndpoint = baseUrl.replace(/\/tavli_db\.json$/, `/tavli_db/liveRooms/${encodeURIComponent(code)}.json`);
+    const subUrl = this.getSubPathUrl(`liveRooms/${encodeURIComponent(code)}`);
+    if (subUrl) {
       try {
-        await fetch(roomEndpoint, { method: "DELETE" });
+        await fetch(subUrl, { method: "DELETE" });
       } catch (_) {}
     }
-    return this.save();
+    await this.clearRoomSignalPackets(code);
+    return true;
   },
 
   getLiveRooms() {

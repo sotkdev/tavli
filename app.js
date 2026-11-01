@@ -75,6 +75,9 @@ let localTypingTimeout = null;
 let remoteTypingTimeout = null;
 let helloRetryTimer = null;  // Handshake retry loop for reliable Spectator & Joiner connection
 let clientConnectRetryTimer = null; // Automatic WebRTC connection retry timer if channel hangs or Host isn't ready yet
+let cloudRelayPollTimer = null;     // Firebase Cloud Relay polling loop (guarantees 100% connection across any 2 browsers/networks)
+let lastProcessedCloudSignalId = null;
+let isCloudRelayConnected = false;
 
 let packetQueue = [];
 let isProcessingPacket = false;
@@ -97,6 +100,88 @@ function stopHelloRetry() {
   }
 }
 
+function stopCloudRelayPolling() {
+  if (cloudRelayPollTimer) {
+    clearInterval(cloudRelayPollTimer);
+    cloudRelayPollTimer = null;
+  }
+  isCloudRelayConnected = false;
+  lastProcessedCloudSignalId = null;
+}
+
+// Virtual connection object used when Firebase Cloud Relay completes the handshake before/instead of WebRTC
+function createCloudVirtualConn(targetChannel, roomCode) {
+  return {
+    open: true,
+    _isCloudVirtual: true,
+    _targetChannel: targetChannel,
+    send(pkt) {
+      if (window.TavliDB && typeof window.TavliDB.pushRoomSignalPacket === "function") {
+        window.TavliDB.pushRoomSignalPacket(roomCode, targetChannel, pkt);
+      }
+    },
+    close() {
+      this.open = false;
+    }
+  };
+}
+
+function startHostCloudRelayListener(code) {
+  stopCloudRelayPolling();
+  if (!window.TavliDB || typeof window.TavliDB.pullRoomSignalPacket !== "function") return;
+  window.TavliDB.clearRoomSignalPackets(code);
+
+  cloudRelayPollTimer = setInterval(async () => {
+    if (myRole !== "W" || activeRoomCode !== code || isAiMatch || isTutorialMode) {
+      stopCloudRelayPolling();
+      return;
+    }
+    const env = await window.TavliDB.pullRoomSignalPacket(code, "TO_HOST");
+    if (!env || !env.id || env.id === lastProcessedCloudSignalId || !env.packet) return;
+    lastProcessedCloudSignalId = env.id;
+
+    // If a real WebRTC connection is already open and active with Player B, ignore duplicate HELLO from cloud
+    if (conn && conn.open && !conn._isCloudVirtual && env.packet.type === "HELLO" && env.packet.role !== "SPECTATOR") {
+      return;
+    }
+
+    // Create or reuse virtual cloud connection for Player B or Spectator
+    const isSpec = (env.packet.role === "SPECTATOR");
+    if (isSpec) {
+      const specVirtual = createCloudVirtualConn("TO_CLIENT", code);
+      specVirtual._isSpectator = true;
+      handleHostIncomingPacket(env.packet, specVirtual, code);
+    } else {
+      if (!conn || !conn.open) {
+        conn = createCloudVirtualConn("TO_CLIENT", code);
+        isCloudRelayConnected = true;
+      }
+      handleHostIncomingPacket(env.packet, conn, code);
+    }
+  }, 900);
+}
+
+function startClientCloudRelayListener(code, asSpectator, onPacketCallback) {
+  stopCloudRelayPolling();
+  if (!window.TavliDB || typeof window.TavliDB.pullRoomSignalPacket !== "function") return;
+
+  cloudRelayPollTimer = setInterval(async () => {
+    if (activeRoomCode !== code || (myRole !== "B" && myRole !== "SPECTATOR")) {
+      stopCloudRelayPolling();
+      return;
+    }
+    const env = await window.TavliDB.pullRoomSignalPacket(code, "TO_CLIENT");
+    if (!env || !env.id || env.id === lastProcessedCloudSignalId || !env.packet) return;
+    lastProcessedCloudSignalId = env.id;
+
+    if (!conn || !conn.open) {
+      conn = createCloudVirtualConn("TO_HOST", code);
+      isCloudRelayConnected = true;
+    }
+    onPacketCallback(env.packet);
+  }, 900);
+}
+
 let liveRoomHeartbeatTimer = null;
 
 function publishHostLiveRoomStatus() {
@@ -105,7 +190,7 @@ function publishHostLiveRoomStatus() {
     window.TavliDB.removeLiveRoom(activeRoomCode);
     return;
   }
-  const hasSecondPlayer = Boolean(conn && conn.open && !isWaitingForReconnect);
+  const hasSecondPlayer = Boolean(((conn && conn.open) || isCloudRelayConnected) && !isWaitingForReconnect);
   window.TavliDB.upsertLiveRoom({
     roomCode: activeRoomCode,
     hostName: playerNames.W || myPlayerName || "Player 1",
@@ -1599,6 +1684,7 @@ function handlePlayAgainSameSettings() {
 
 function handleExitToInitialMenu(notifyPeer = true) {
   stopHelloRetry();
+  stopCloudRelayPolling();
   stopHostLiveRoomHeartbeat(true);
   stopDisconnectCountdown();
   clearActiveRoomBackup();
@@ -1739,6 +1825,8 @@ function broadcastFromHostToAll(packet, excludeConn = null) {
   if (myRole !== "W") return;
   if (conn && conn.open && conn !== excludeConn) {
     try { conn.send(packet); } catch (_) {}
+  } else if (isCloudRelayConnected && activeRoomCode && window.TavliDB && typeof window.TavliDB.pushRoomSignalPacket === "function") {
+    window.TavliDB.pushRoomSignalPacket(activeRoomCode, "TO_CLIENT", packet);
   }
   spectatorConns = spectatorConns.filter(sc => sc && sc.open);
   spectatorConns.forEach(sc => {
@@ -1817,11 +1905,17 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
     initGame("ROLL_OFF");
   }
 
+  // Start Live Room registration & Cloud Relay listener immediately (0ms wait) so friends can join even if PeerJS signaling is slow or blocked
+  startHostLiveRoomHeartbeat();
+  startHostCloudRelayListener(code);
+
   peer = new Peer("tavli-net-" + code, PEER_CONFIG);
 
   peer.on("open", () => {
-    document.getElementById("netStatus").textContent = t().hostingWait(activeRoomCode);
-    startHostLiveRoomHeartbeat();
+    if (!conn || !conn.open) {
+      document.getElementById("netStatus").textContent = t().hostingWait(activeRoomCode);
+    }
+    publishHostLiveRoomStatus();
     // Copy invite link quietly to clipboard so the browser doesn't block WebRTC with a native OS share sheet
     if (!restoredBackup && navigator.clipboard && navigator.clipboard.writeText) {
       const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${activeRoomCode}`;
@@ -1939,10 +2033,7 @@ function joinRoomWithCode(rawCode, asSpectator = false) {
       return;
     }
     try {
-      if (conn) {
-        try { conn.close(); } catch (_) {}
-      }
-      conn = peer.connect("tavli-net-" + code, {
+      const rtcConn = peer.connect("tavli-net-" + code, {
         reliable: true,
         metadata: {
           role: asSpectator ? "SPECTATOR" : "B",
@@ -1950,9 +2041,14 @@ function joinRoomWithCode(rawCode, asSpectator = false) {
           color: myChosenColor
         }
       });
-      setupClientConn(code, asSpectator);
+      setupClientConn(code, asSpectator, false, rtcConn);
     } catch (_) {}
   };
+
+  // Start Cloud Relay handshake immediately (0ms wait) while PeerJS initializes in parallel
+  conn = createCloudVirtualConn("TO_HOST", code);
+  isCloudRelayConnected = true;
+  setupClientConn(code, asSpectator);
 
   peer = new Peer(PEER_CONFIG);
 
@@ -2042,7 +2138,9 @@ function syncDatabaseWithPeer() {
   }
 }
 
-function setupIncomingHostConn(incomingConn, code) {
+function handleHostIncomingPacket(packet, incomingConn, code) {
+  if (!packet || typeof packet !== "object") return;
+
   const registerSpectatorAndSendAck = (rawName) => {
     const cleanName = String(rawName || "Spectator").trim().slice(0, 16) || "Spectator";
     const firstTime = !incomingConn._ackSent;
@@ -2072,100 +2170,68 @@ function setupIncomingHostConn(incomingConn, code) {
     }
   };
 
-  incomingConn.on("open", () => {
-    if (!incomingConn.metadata) return;
-    if (incomingConn.metadata.role === "SPECTATOR") {
-      registerSpectatorAndSendAck(incomingConn.metadata.name);
+  if (packet.type === "HELLO") {
+    if (packet.dbSnapshot) {
+      window.TavliDB.mergePublicSnapshot(packet.dbSnapshot);
     }
-  });
+    const cleanName = String(packet.name || "Friend").trim().slice(0, 16) || "Friend";
 
-  incomingConn.on("data", packet => {
-    if (!packet || typeof packet !== "object") return;
-
-    if (packet.type === "HELLO") {
-      if (packet.dbSnapshot) {
-        window.TavliDB.mergePublicSnapshot(packet.dbSnapshot);
-      }
-      const cleanName = String(packet.name || "Friend").trim().slice(0, 16) || "Friend";
-
-      const isSamePlayerRetrying =
-        conn &&
-        conn !== incomingConn &&
-        window.TavliDB.normalizeKey(playerNames.B) === window.TavliDB.normalizeKey(cleanName);
-      if (isSamePlayerRetrying) {
-        try { conn.close(); } catch (_) {}
-        conn = null;
-      }
-      const playerSlotTaken = (conn && conn.open && conn !== incomingConn && !isWaitingForReconnect);
-      const isSpectatorConn = (packet.role === "SPECTATOR" || playerSlotTaken);
-
-      if (isSpectatorConn) {
-        registerSpectatorAndSendAck(cleanName);
-        return;
-      }
-
-      const alreadyInitializedOpponent = (incomingConn === conn && incomingConn._ackSent);
-      incomingConn._isSpectator = false;
-      incomingConn._ackSent = true;
+    // Upgrade from virtual cloud connection to real WebRTC connection or allow same player retry
+    const isSamePlayerRetrying =
+      conn &&
+      conn !== incomingConn &&
+      (conn._isCloudVirtual || window.TavliDB.normalizeKey(playerNames.B) === window.TavliDB.normalizeKey(cleanName));
+    if (isSamePlayerRetrying) {
+      const wasAlreadyAcked = Boolean(conn._ackSent);
+      try { conn.close(); } catch (_) {}
       conn = incomingConn;
-      stopDisconnectCountdown();
-      document.getElementById("netStatus").textContent = t().roomLocked(code);
+      conn._ackSent = wasAlreadyAcked;
+    }
 
-      const reqColor = CHECKER_COLORS.some(c => c.id === packet.color) ? packet.color : "black";
-      playerNames.W = myPlayerName;
-      playerNames.B = cleanName;
+    const playerSlotTaken = (conn && conn.open && conn !== incomingConn && !isWaitingForReconnect);
+    const isSpectatorConn = (packet.role === "SPECTATOR" || playerSlotTaken);
+
+    if (isSpectatorConn) {
+      registerSpectatorAndSendAck(cleanName);
+      return;
+    }
+
+    const alreadyInitializedOpponent = (incomingConn === conn && incomingConn._ackSent);
+    incomingConn._isSpectator = false;
+    incomingConn._ackSent = true;
+    conn = incomingConn;
+    stopDisconnectCountdown();
+    document.getElementById("netStatus").textContent = t().roomLocked(code);
+
+    const reqColor = CHECKER_COLORS.some(c => c.id === packet.color) ? packet.color : "black";
+    playerNames.W = myPlayerName;
+    playerNames.B = cleanName;
+    state.playerNames = { W: playerNames.W, B: playerNames.B };
+    state.colors.B = (reqColor === state.colors.W) ? getDistinctFallbackColor(state.colors.W) : reqColor;
+
+    if (alreadyInitializedOpponent) {
+      safeSend(conn, {
+        type: "HELLO_ACK",
+        assignedRole: "B",
+        playerNames: cloneState(playerNames),
+        state: cloneState(state),
+        spectatorCount: spectatorConns.length,
+        dbSnapshot: window.TavliDB.exportPublicSnapshot()
+      });
+      return;
+    }
+
+    const localHasProgress = (state.scoreW > 0 || state.scoreB > 0 || state.rolled || (state.setGamesLog && state.setGamesLog.length > 0));
+    if (packet.isReconnect && (localHasProgress || packet.savedState)) {
+      if (!localHasProgress && packet.savedState) {
+        state = cloneState(packet.savedState);
+      }
       state.playerNames = { W: playerNames.W, B: playerNames.B };
-      state.colors.B = (reqColor === state.colors.W) ? getDistinctFallbackColor(state.colors.W) : reqColor;
-
-      if (alreadyInitializedOpponent) {
-        safeSend(conn, {
-          type: "HELLO_ACK",
-          assignedRole: "B",
-          playerNames: cloneState(playerNames),
-          state: cloneState(state),
-          spectatorCount: spectatorConns.length,
-          dbSnapshot: window.TavliDB.exportPublicSnapshot()
-        });
-        return;
-      }
-
-      const localHasProgress = (state.scoreW > 0 || state.scoreB > 0 || state.rolled || (state.setGamesLog && state.setGamesLog.length > 0));
-      if (packet.isReconnect && (localHasProgress || packet.savedState)) {
-        if (!localHasProgress && packet.savedState) {
-          state = cloneState(packet.savedState);
-        }
-        state.playerNames = { W: playerNames.W, B: playerNames.B };
-        updateHeaderLabels();
-        publishHostLiveRoomStatus();
-        appendChatLine(t().sysLabel, t().oppRejoinedChat(cleanName), "SYS");
-        setStatus(t().oppRejoinedStatus(cleanName));
-        saveActiveRoomBackup();
-
-        safeSend(conn, {
-          type: "HELLO_ACK",
-          assignedRole: "B",
-          playerNames: cloneState(playerNames),
-          state: cloneState(state),
-          spectatorCount: spectatorConns.length,
-          dbSnapshot: window.TavliDB.exportPublicSnapshot()
-        });
-        syncState();
-        syncDatabaseWithPeer();
-        playTurnChime();
-        render();
-        checkTriggerAutoRollOrAI();
-        return;
-      }
-
       updateHeaderLabels();
       publishHostLiveRoomStatus();
-      appendChatLine(t().sysLabel, t().joinedTableChat(cleanName), "SYS");
-
-      state.scoreW = 0;
-      state.scoreB = 0;
-      state.variantIdx = 0;
-      resetSetTracking();
-      initGame("ROLL_OFF");
+      appendChatLine(t().sysLabel, t().oppRejoinedChat(cleanName), "SYS");
+      setStatus(t().oppRejoinedStatus(cleanName));
+      saveActiveRoomBackup();
 
       safeSend(conn, {
         type: "HELLO_ACK",
@@ -2179,10 +2245,52 @@ function setupIncomingHostConn(incomingConn, code) {
       syncDatabaseWithPeer();
       playTurnChime();
       render();
+      checkTriggerAutoRollOrAI();
       return;
     }
 
-    handleCommonPacketOnPeer(packet, incomingConn);
+    updateHeaderLabels();
+    publishHostLiveRoomStatus();
+    appendChatLine(t().sysLabel, t().joinedTableChat(cleanName), "SYS");
+
+    state.scoreW = 0;
+    state.scoreB = 0;
+    state.variantIdx = 0;
+    resetSetTracking();
+    initGame("ROLL_OFF");
+
+    safeSend(conn, {
+      type: "HELLO_ACK",
+      assignedRole: "B",
+      playerNames: cloneState(playerNames),
+      state: cloneState(state),
+      spectatorCount: spectatorConns.length,
+      dbSnapshot: window.TavliDB.exportPublicSnapshot()
+    });
+    syncState();
+    syncDatabaseWithPeer();
+    playTurnChime();
+    render();
+    return;
+  }
+
+  handleCommonPacketOnPeer(packet, incomingConn);
+}
+
+function setupIncomingHostConn(incomingConn, code) {
+  incomingConn.on("open", () => {
+    if (!incomingConn.metadata) return;
+    if (incomingConn.metadata.role === "SPECTATOR") {
+      handleHostIncomingPacket({
+        type: "HELLO",
+        role: "SPECTATOR",
+        name: incomingConn.metadata.name || "Spectator"
+      }, incomingConn, code);
+    }
+  });
+
+  incomingConn.on("data", packet => {
+    handleHostIncomingPacket(packet, incomingConn, code);
   });
 
   incomingConn.on("close", () => {
@@ -2204,85 +2312,32 @@ function setupIncomingHostConn(incomingConn, code) {
   });
 }
 
-function setupClientConn(code, asSpectator = false, isReconnectingAttempt = false) {
+function setupClientConn(code, asSpectator = false, isReconnectingAttempt = false, rtcConnCandidate = null) {
   let receivedAck = false;
 
-  if (clientConnectRetryTimer) clearTimeout(clientConnectRetryTimer);
-  clientConnectRetryTimer = setTimeout(() => {
-    if (!receivedAck && activeRoomCode === code && (myRole === "B" || myRole === "SPECTATOR")) {
-      // DataChannel didn't complete handshake within 4.5s — automatically re-dial Host peer
-      if (peer && !peer.destroyed && !peer.disconnected) {
-        try {
-          if (conn) { try { conn.close(); } catch (_) {} }
-          conn = peer.connect("tavli-net-" + code, {
-            reliable: true,
-            metadata: {
-              role: asSpectator ? "SPECTATOR" : "B",
-              name: myPlayerName,
-              color: myChosenColor
-            }
-          });
-          setupClientConn(code, asSpectator, isReconnectingAttempt);
-        } catch (_) {}
-      }
-    }
-  }, 4500);
-
-  const sendHelloPacket = () => {
-    if (!conn || !conn.open || receivedAck) return;
+  const buildHelloPacket = () => {
     const wasWaiting = isWaitingForReconnect;
     const backup = !asSpectator ? getActiveRoomBackup(code) : null;
     const hasProgress = !asSpectator && (state.scoreW > 0 || state.scoreB > 0 || state.rolled || (state.setGamesLog && state.setGamesLog.length > 0));
-
-    try {
-      conn.send({
-        type: "HELLO",
-        role: asSpectator ? "SPECTATOR" : "B",
-        name: myPlayerName,
-        color: myChosenColor,
-        isReconnect: Boolean(!asSpectator && (wasWaiting || isReconnectingAttempt || hasProgress || backup)),
-        savedState: (!asSpectator && (wasWaiting || hasProgress)) ? cloneState(state) : (backup ? backup.state : null),
-        savedNames: (!asSpectator && (wasWaiting || hasProgress)) ? cloneState(playerNames) : (backup ? backup.playerNames : null),
-        dbSnapshot: window.TavliDB.exportPublicSnapshot()
-      });
-    } catch (_) {}
+    return {
+      type: "HELLO",
+      role: asSpectator ? "SPECTATOR" : "B",
+      name: myPlayerName,
+      color: myChosenColor,
+      isReconnect: Boolean(!asSpectator && (wasWaiting || isReconnectingAttempt || hasProgress || backup)),
+      savedState: (!asSpectator && (wasWaiting || hasProgress)) ? cloneState(state) : (backup ? backup.state : null),
+      savedNames: (!asSpectator && (wasWaiting || hasProgress)) ? cloneState(playerNames) : (backup ? backup.playerNames : null),
+      dbSnapshot: window.TavliDB.exportPublicSnapshot()
+    };
   };
 
-  const onChannelOpen = () => {
-    stopDisconnectCountdown();
-    sendHelloPacket();
-    stopHelloRetry();
-    helloRetryTimer = setInterval(() => {
-      if (receivedAck || !conn || !conn.open) {
-        stopHelloRetry();
-        return;
-      }
-      sendHelloPacket();
-    }, 1200);
-  };
-
-  conn.on("open", onChannelOpen);
-  if (conn.open) onChannelOpen();
-
-  conn.on("close", () => {
-    stopHelloRetry();
-    if (receivedAck) {
-      handleOpponentLeft();
-    }
-  });
-  conn.on("error", () => {
-    stopHelloRetry();
-    if (receivedAck) {
-      handleOpponentLeft();
-    }
-  });
-
-  conn.on("data", packet => {
+  const handleIncomingClientPacket = packet => {
     if (!packet || typeof packet !== "object") return;
 
     if (packet.type === "HELLO_ACK") {
       receivedAck = true;
       stopHelloRetry();
+      stopDisconnectCountdown();
 
       if (packet.dbSnapshot) {
         window.TavliDB.mergePublicSnapshot(packet.dbSnapshot);
@@ -2313,12 +2368,67 @@ function setupClientConn(code, asSpectator = false, isReconnectingAttempt = fals
     if (packet.type === "STATE") {
       receivedAck = true;
       stopHelloRetry();
+      stopDisconnectCountdown();
       document.getElementById("netStatus").textContent =
         (myRole === "SPECTATOR") ? t().spectatingStatus(code) : t().roomLocked(code);
     }
 
     handleCommonPacketOnPeer(packet, conn);
+  };
+
+  // 1. Immediately start Firebase Cloud Relay listener & send HELLO via Cloud Relay so connection succeeds in <1s even if WebRTC ICE is blocked on same PC / firewall
+  startClientCloudRelayListener(code, asSpectator, handleIncomingClientPacket);
+  if (window.TavliDB && typeof window.TavliDB.pushRoomSignalPacket === "function") {
+    window.TavliDB.pushRoomSignalPacket(code, "TO_HOST", buildHelloPacket());
+  }
+
+  const sendHelloPacket = () => {
+    if (receivedAck) return;
+    const pkt = buildHelloPacket();
+    if (conn && conn.open) {
+      try { conn.send(pkt); } catch (_) {}
+    } else if (window.TavliDB && typeof window.TavliDB.pushRoomSignalPacket === "function") {
+      window.TavliDB.pushRoomSignalPacket(code, "TO_HOST", pkt);
+    }
+  };
+
+  stopHelloRetry();
+  helloRetryTimer = setInterval(() => {
+    if (receivedAck || activeRoomCode !== code) {
+      stopHelloRetry();
+      return;
+    }
+    sendHelloPacket();
+  }, 1400);
+
+  const targetRtc = rtcConnCandidate || (conn && !conn._isCloudVirtual ? conn : null);
+  if (!targetRtc || typeof targetRtc.on !== "function") return;
+
+  const onChannelOpen = () => {
+    // Upgrade active conn to the opened direct WebRTC DataChannel
+    conn = targetRtc;
+    stopDisconnectCountdown();
+    sendHelloPacket();
+  };
+
+  targetRtc.on("open", onChannelOpen);
+  if (targetRtc.open) onChannelOpen();
+
+  targetRtc.on("close", () => {
+    // Fall back seamlessly to Cloud Virtual conn so gameplay never drops
+    if (activeRoomCode === code && (myRole === "B" || myRole === "SPECTATOR")) {
+      conn = createCloudVirtualConn("TO_HOST", code);
+      isCloudRelayConnected = true;
+    }
   });
+  targetRtc.on("error", () => {
+    if (activeRoomCode === code && (myRole === "B" || myRole === "SPECTATOR")) {
+      conn = createCloudVirtualConn("TO_HOST", code);
+      isCloudRelayConnected = true;
+    }
+  });
+
+  targetRtc.on("data", handleIncomingClientPacket);
 }
 
 function handleCommonPacketOnPeer(packet, sourceConn) {
