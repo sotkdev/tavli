@@ -240,6 +240,10 @@ function selectTheme(themeId) {
   myTheme = ALL_THEMES.includes(themeId) ? themeId : "classic";
   document.body.setAttribute("data-theme", myTheme);
   localStorage.setItem("tavli_theme", myTheme);
+  const sel = document.getElementById("themeSelectDropdown");
+  if (sel && sel.value !== myTheme) {
+    sel.value = myTheme;
+  }
   ALL_THEMES.forEach(id => {
     const el = document.getElementById("themeCard_" + id);
     if (el) el.classList.toggle("active", id === myTheme);
@@ -575,6 +579,8 @@ function applyLanguageToUI() {
   document.getElementById("thNameTerracotta").textContent = tr.thTerracotta;
   document.getElementById("thNameMidnight").textContent = tr.thMidnight;
   document.getElementById("thNameSakura").textContent = tr.thSakura;
+  const themeDrop = document.getElementById("themeSelectDropdown");
+  if (themeDrop) themeDrop.value = myTheme;
 
   // Version 21 Settings Labels in Settings Modal
   const setTxt = (id, val) => {
@@ -608,7 +614,7 @@ function applyLanguageToUI() {
 
   document.getElementById("profCloseBtn").textContent = tr.closeBtn;
   document.getElementById("lbCloseBtn").textContent = tr.closeBtn;
-  document.getElementById("settingsCloseBtn").textContent = tr.closeBtn;
+  document.getElementById("settingsCloseBtn").textContent = tr.saveCloseSettingsBtn || "💾 Save & Close settings";
 
   const wSender = document.getElementById("welcomeSender");
   const wMsg = document.getElementById("welcomeMsg");
@@ -740,11 +746,26 @@ async function openSettingsModal() {
     await verifyIdentityOnLanding(false);
   }
   applyV21SettingsToDOM();
+  const themeDrop = document.getElementById("themeSelectDropdown");
+  if (themeDrop) themeDrop.value = myTheme;
   renderSettingsAccountSection();
   document.getElementById("settingsModal").style.display = "flex";
 }
 function closeSettingsModal() {
   document.getElementById("settingsModal").style.display = "none";
+}
+async function saveAndCloseSettingsModal() {
+  const nameInput = document.getElementById("profEditName");
+  const pinInput = document.getElementById("profEditPin");
+  if (isAuthenticatedAccount && nameInput) {
+    const newName = nameInput.value.trim();
+    const newPin = pinInput ? pinInput.value.trim() : "";
+    if ((newName && newName !== myPlayerName) || newPin.length > 0) {
+      const ok = await saveProfileEdits();
+      if (!ok) return;
+    }
+  }
+  closeSettingsModal();
 }
 
 function renderProfileModalContent(targetNameOverride = null) {
@@ -1270,7 +1291,7 @@ async function saveProfileEdits() {
   const res = await window.TavliDB.updateCredentialsAsync(myPlayerName, newName, newPin, mySessionPin);
   if (!res.ok) {
     alert(res.message);
-    return;
+    return false;
   }
 
   if (newPin) mySessionPin = newPin;
@@ -1294,6 +1315,7 @@ async function saveProfileEdits() {
   render();
   syncDatabaseWithPeer();
   renderSettingsAccountSection(t().profSavedMsg);
+  return true;
 }
 
 async function openLeaderboardModal() {
