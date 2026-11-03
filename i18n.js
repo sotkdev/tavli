@@ -1,21 +1,35 @@
-// e-Tavli — Bilingual Dictionary, V21–V23 Settings State, Live Games Lobby & Global Constants (i18n.js — v23)
+// e-Tavli — Bilingual Dictionary, V21–V24 Settings State, Turn Timers, ELO, Presence, Challenges & Global Constants (i18n.js — v24)
 
 let myLang = "en";
 let myTheme = "classic";
 const ALL_THEMES = ["classic", "blue", "green", "white", "amethyst", "terracotta", "midnight", "sakura"];
 const PAGE_SIZE = 10;
 const ROOM_BACKUP_KEY = "tavli_active_room_backup_v1";
+const BOT_BACKUP_KEY  = "tavli_active_bot_backup_v1";
 const RECONNECT_WINDOW_MS = 5 * 60 * 1000;
+const INACTIVITY_FORFEIT_MS = 5 * 60 * 1000;
 
-// --- Version 21: 5 New Board & Gameplay Settings State ---
+const TAVLI_EMOJIS = [
+  "😀","😂","😎","🥳","😅","🤔",
+  "🎲","🏆","🔥","👏","👍","🙌",
+  "☕","🧿","🇬🇷","👑","💪","🤝",
+  "😮","😢","😡","🙏","⚡","🎯"
+];
+
+// --- Version 21–23: 7 Board & Gameplay Settings State ---
 let myPipIndexMode = localStorage.getItem("tavli_v21_pip_index") || "RELATIVE";   // 'OFF' | 'ABSOLUTE' | 'RELATIVE'
 let myPipCountDisplay = localStorage.getItem("tavli_v21_pip_count") !== "OFF";    // true | false
 let myMoveIndicatorMode = localStorage.getItem("tavli_v21_move_ind") || "BADGES"; // 'BADGES' | 'GLOW'
 let myAnimSpeed = localStorage.getItem("tavli_v21_anim_speed") || "NORMAL";       // 'INSTANT' | 'NORMAL' | 'SMOOTH'
 let myBoardTexture = localStorage.getItem("tavli_v21_board_tex") || "WOOD";       // 'GLOSS' | 'MATTE' | 'WOOD'
-// --- Version 23: Tap Controls & Auto-Bearoff Settings State ---
 let myTapControlMode = localStorage.getItem("tavli_v23_tap_mode") || "SELECT";    // 'SELECT' | 'AUTO_LARGEST'
 let myAutoBearOff = localStorage.getItem("tavli_v23_auto_bearoff") === "ON";      // true | false
+
+// --- Version 24: Host Turn Timer State ---
+const ALLOWED_TURN_TIMERS = [0, 30, 60, 120, 300]; // 0 = Unlimited, 30s, 60s, 2m, 5m
+let myTurnTimerPref = parseInt(localStorage.getItem("tavli_v24_turn_timer") || "0", 10) || 0;
+let pendingChallengeTarget = null;
+let activeIncomingChallenge = null;
 
 const ANIM_SPEED_CONFIG = {
   INSTANT: { checkerMs: 0,   diceMs: 0   },
@@ -43,7 +57,7 @@ const CHECKER_COLORS = [
 
 const ALLOWED_TARGETS = [1, 3, 5, 7];
 
-let modalRole = "HOST"; // 'HOST' | 'JOIN' | 'SPECTATE' | 'AI'
+let modalRole = "HOST"; // 'HOST' | 'JOIN' | 'SPECTATE' | 'AI' | 'CHALLENGE'
 let myChosenColor = "white";
 let myStoreDetailsPref = true;
 let isAuthenticatedAccount = false;
@@ -71,6 +85,45 @@ const I18N = {
     btnLogoutIdentity: "Logout",
     verifiedBadge: name => `✅ Logged in as "${name}"`,
     guestBadge: name => `👤 Playing as Guest "${name}"`,
+    // Version 24: Active Game Banner & Resign / Bot Resume
+    activeOnlineBannerTitle: code => `🟢 Active Online Game (Room ${code})`,
+    activeOnlineBannerSub: (w, b, sw, sb, target) => `${w} vs ${b} • Score: ${sw} - ${sb} (Target: ${target})`,
+    activeBotBannerTitle: diff => `🤖 Active Game vs AI (${diff})`,
+    activeBotBannerSub: (sw, sb, target) => `Current Match Score: ${sw} - ${sb} (Target: ${target})`,
+    btnReturnToActiveGame: "▶ Return to Active Game",
+    btnResignActiveSet: "🏳️ Resign",
+    btnReturnToBotGame: "▶ Return to Game",
+    btnEndBotGame: "✕ End Game",
+    confirmResignMainMenu: "Are you sure you want to resign? You will lose the current game and the full set, while all previous games in this set will still count in stats.",
+    resignedSetReason: (loser, winner) => `🏳️ ${loser} resigned the match! ${winner} wins the game and the set.`,
+    // Version 24: Turn Timers & 3-Strike Inactivity
+    lblTurnTimer: "Turn Timer",
+    timerOptUnlimited: "Unlimited",
+    timerOpt30s: "30s",
+    timerOpt60s: "60s",
+    timerOpt2m: "2m",
+    timerOpt5m: "5m",
+    turnTimeoutAutoAiChat: (name, strikes) => `⏱️ Time expired for ${name}! AI played their turn automatically (${strikes}/3 missed turns).`,
+    inactivity5MinWarn: (name, mmss) => `⚠️ ${name} missed 3 turns in a row! 5-minute inactivity countdown: ${mmss} remaining before forfeiting game & set.`,
+    inactivityForfeitReason: (loser, winner) => `⏱️ ${loser} was inactive for 3 turns + 5 minutes — ${winner} wins the game and the set!`,
+    // Version 24: ELO, Doubles, Presence & Challenges
+    colElo: "ELO",
+    profElo: "ELO Rating",
+    setDoublesHeading: "Doubles Rolled in This Set",
+    doublesCountText: count => `${count} ${count === 1 ? "Double" : "Doubles"}`,
+    presenceOnlineIdle: "Online",
+    presenceHosting: "Hosting Room",
+    presencePlaying: "In a Game",
+    presenceOffline: "Offline",
+    challengeBtnLabel: "⚔️ Challenge",
+    titleChallengeModal: target => `⚔️ Challenge ${target} to a Game`,
+    btnSendChallenge: "⚔️ Send Challenge & Host",
+    challengeModalTitle: "⚔️ Game Challenge!",
+    challengeModalDesc: (fromName, mode, target, timerLbl) => `${fromName} challenges you to a match (${mode} • Target: ${target} • Timer: ${timerLbl})! Do you accept?`,
+    btnAcceptChallenge: "✓ Accept Challenge",
+    btnDeclineChallenge: "✕ Decline",
+    challengeSentWaiting: target => `⚔️ Challenge sent to ${target}! Waiting for response...`,
+    challengeDeclinedChat: target => `✕ ${target} declined your game challenge.`,
     hubBtnHost: "Host a Game Against a Friend",
     hubBtnJoin: "Join Friend's Game",
     hubBtnLiveGames: "Live Games",
@@ -152,7 +205,7 @@ const I18N = {
     profTitle: "Player Profile",
     profSendMsgBtn: name => `💬 Send Message to ${name}`,
     profBackToMyProfile: "◀ Back to My Profile",
-    profClickHint: "💡 Tip: Click any player's name to view their profile and send them a message.",
+    profClickHint: "💡 Tip: Click any player's name to view their profile, message them, or challenge them.",
     msgModalTitle: "💬 Global Player Messages",
     msgLoginReq: "Please log in with your 4-digit PIN on the main menu to send and receive player messages.",
     msgConversationsHdr: "Conversations",
@@ -163,9 +216,9 @@ const I18N = {
     msgSendBtn: "Send",
     msgChattingWith: name => `Chat with ${name}`,
     msgViewProfBtn: "👤 View Profile",
-    lbTitle: "Global Leaderboard",
+    lbTitle: "Global Leaderboard (Sorted by ELO)",
     lbSyncing: "🔄 Syncing with global server...",
-    lbSynced: "🌐 Live Global Server Leaderboard — Click any player to view profile & message",
+    lbSynced: "🌐 Live Global Leaderboard (Sorted by ELO) — Click any player for profile, message, or challenge",
     settingsTitle: "Settings",
     lblSettingsTheme: "Board & UI Colour Theme (8 Themes)",
     thClassic: "Classic Walnut",
@@ -176,7 +229,6 @@ const I18N = {
     thTerracotta: "Sunset Terracotta",
     thMidnight: "Midnight Gold",
     thSakura: "Sakura Blossom",
-    // Version 21 Settings Strings
     lblPipIndex: "1. Point Numbers Toggle (Pip Index)",
     optPipOff: "Hidden",
     optPipAbs: "Standard (1–24)",
@@ -303,6 +355,45 @@ const I18N = {
     btnLogoutIdentity: "Αποσύνδεση",
     verifiedBadge: name => `✅ Συνδεδεμένος ως "${name}"`,
     guestBadge: name => `👤 Επισκέπτης "${name}"`,
+    // Version 24: Active Game Banner & Resign / Bot Resume (Greek)
+    activeOnlineBannerTitle: code => `🟢 Ενεργό Online Παιχνίδι (Δωμάτιο ${code})`,
+    activeOnlineBannerSub: (w, b, sw, sb, target) => `${w} εναντίον ${b} • Σκορ: ${sw} - ${sb} (Στόχος: ${target})`,
+    activeBotBannerTitle: diff => `🤖 Ενεργό Παιχνίδι με AI (${diff})`,
+    activeBotBannerSub: (sw, sb, target) => `Τρέχον Σκορ: ${sw} - ${sb} (Στόχος: ${target})`,
+    btnReturnToActiveGame: "▶ Επιστροφή στο Παιχνίδι",
+    btnResignActiveSet: "🏳️ Παραίτηση",
+    btnReturnToBotGame: "▶ Επιστροφή στο Παιχνίδι",
+    btnEndBotGame: "✕ Τέλος Παιχνιδιού",
+    confirmResignMainMenu: "Είστε σίγουροι ότι θέλετε να παραιτηθείτε; Θα χάσετε το τρέχον παιχνίδι και όλο το σετ, ενώ τα προηγούμενα παιχνίδια του σετ μετρούν κανονικά.",
+    resignedSetReason: (loser, winner) => `🏳️ Ο/Η ${loser} παραιτήθηκε! Ο/Η ${winner} κερδίζει το παιχνίδι και το σετ.`,
+    // Version 24: Turn Timers & 3-Strike Inactivity (Greek)
+    lblTurnTimer: "Χρονόμετρο Σειράς",
+    timerOptUnlimited: "Απεριόριστο",
+    timerOpt30s: "30δ",
+    timerOpt60s: "60δ",
+    timerOpt2m: "2λ",
+    timerOpt5m: "5λ",
+    turnTimeoutAutoAiChat: (name, strikes) => `⏱️ Έληξε ο χρόνος για ${name}! Το AI έπαιξε αυτόματα (${strikes}/3 χαμένες σειρές).`,
+    inactivity5MinWarn: (name, mmss) => `⚠️ Ο/Η ${name} έχασε 3 συνεχόμενες σειρές! Αντίστροφη μέτρηση αδράνειας 5 λεπτών: ${mmss} πριν την ήττα παιχνιδιού & σετ.`,
+    inactivityForfeitReason: (loser, winner) => `⏱️ Ο/Η ${loser} ήταν αδρανής για 3 σειρές + 5 λεπτά — Ο/Η ${winner} κερδίζει το παιχνίδι και το σετ!`,
+    // Version 24: ELO, Doubles, Presence & Challenges (Greek)
+    colElo: "ELO",
+    profElo: "Βαθμολογία ELO",
+    setDoublesHeading: "Διπλές Ζαριές στο Σετ",
+    doublesCountText: count => `${count} ${count === 1 ? "Διπλή" : "Διπλές"}`,
+    presenceOnlineIdle: "Online",
+    presenceHosting: "Δωμάτιο",
+    presencePlaying: "Παίζει",
+    presenceOffline: "Offline",
+    challengeBtnLabel: "⚔️ Πρόκληση",
+    titleChallengeModal: target => `⚔️ Πρόκληση σε ${target}`,
+    btnSendChallenge: "⚔️ Αποστολή Πρόκλησης",
+    challengeModalTitle: "⚔️ Πρόκληση για Παιχνίδι!",
+    challengeModalDesc: (fromName, mode, target, timerLbl) => `Ο/Η ${fromName} σας προκαλεί σε αγώνα (${mode} • Στόχος: ${target} • Χρόνος: ${timerLbl})! Δέχεστε;`,
+    btnAcceptChallenge: "✓ Αποδοχή",
+    btnDeclineChallenge: "✕ Απόρριψη",
+    challengeSentWaiting: target => `⚔️ Η πρόκληση στάλθηκε στον/στην ${target}! Αναμονή απάντησης...`,
+    challengeDeclinedChat: target => `✕ Ο/Η ${target} απέρριψε την πρόκληση.`,
     hubBtnHost: "Δημιουργία Παιχνιδιού με Φίλο",
     hubBtnJoin: "Σύνδεση σε Παιχνίδι Φίλου",
     hubBtnLiveGames: "Ζωντανά Παιχνίδια",
@@ -384,7 +475,7 @@ const I18N = {
     profTitle: "Προφίλ Παίκτη",
     profSendMsgBtn: name => `💬 Αποστολή Μηνύματος σε ${name}`,
     profBackToMyProfile: "◀ Πίσω στο Προφίλ Μου",
-    profClickHint: "💡 Συμβουλή: Πατήστε σε οποιοδήποτε όνομα παίκτη για να δείτε το προφίλ του και να του στείλετε μήνυμα.",
+    profClickHint: "💡 Συμβουλή: Πατήστε σε οποιοδήποτε όνομα παίκτη για προφίλ, μήνυμα ή πρόκληση.",
     msgModalTitle: "💬 Μηνύματα Παικτών",
     msgLoginReq: "Παρακαλώ συνδεθείτε με το 4-ψήφιο PIN σας στο αρχικό μενού για να στέλνετε και να λαμβάνετε μηνύματα.",
     msgConversationsHdr: "Συνομιλίες",
@@ -395,9 +486,9 @@ const I18N = {
     msgSendBtn: "Αποστολή",
     msgChattingWith: name => `Συνομιλία με ${name}`,
     msgViewProfBtn: "👤 Προφίλ",
-    lbTitle: "Παγκόσμια Κατάταξη",
+    lbTitle: "Παγκόσμια Κατάταξη (Ταξινόμηση με ELO)",
     lbSyncing: "🔄 Συγχρονισμός με τον Server...",
-    lbSynced: "🌐 Ζωντανή Κατάταξη Server — Πατήστε σε έναν παίκτη για προφίλ & μήνυμα",
+    lbSynced: "🌐 Ζωντανή Κατάταξη (Ταξινόμηση ELO) — Πατήστε σε παίκτη για προφίλ, μήνυμα ή πρόκληση",
     settingsTitle: "Ρυθμίσεις",
     lblSettingsTheme: "Χρωματικό Θέμα Ταμπλό & UI (8 Θέματα)",
     thClassic: "Κλασικό Ξύλο",
@@ -408,7 +499,6 @@ const I18N = {
     thTerracotta: "Τερακότα Ηλιοβασιλέματος",
     thMidnight: "Μεσάνυχτα & Χρυσός",
     thSakura: "Άνθη Κερασιάς",
-    // Version 21 Settings Strings (Greek)
     lblPipIndex: "1. Αρίθμηση Θέσεων Ταμπλό (1–24)",
     optPipOff: "Κρυφή",
     optPipAbs: "Σταθερή (1–24)",

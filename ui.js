@@ -1,4 +1,4 @@
-// e-Tavli — UI, Auth, Modals, Live Games Lobby, Autocomplete Player Messaging, V21–V23 Settings & Board Renderer (ui.js — v23)
+// e-Tavli — UI, Auth, Modals, Active Game Banner, Turn Timer Selector, ELO, Online Presence, Challenges, Emoji Pickers & Board Renderer (ui.js — v24)
 
 function t() {
   return I18N[myLang] || I18N.en;
@@ -25,7 +25,181 @@ function setStatus(msg) {
 }
 
 // ============================================================================
-// VERSION 21: 5 NEW BOARD & GAMEPLAY SETTINGS HANDLERS
+// VERSION 24: EMOJI PICKER POPOVER FOR IN-GAME CHAT & GLOBAL MESSAGES
+// ============================================================================
+function toggleEmojiPicker(popoverId, inputId) {
+  const pop = document.getElementById(popoverId);
+  if (!pop) return;
+  const isOpen = pop.classList.contains("open");
+  document.querySelectorAll(".emoji-popover.open").forEach(el => el.classList.remove("open"));
+  if (isOpen) return;
+
+  const list = (typeof TAVLI_EMOJIS !== "undefined" && Array.isArray(TAVLI_EMOJIS))
+    ? TAVLI_EMOJIS
+    : ["😀","😂","😎","🎲","🏆","🔥","👏","👍","☕","🧿","🇬🇷","👑"];
+
+  pop.innerHTML = "";
+  list.forEach(em => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "emoji-item-btn";
+    btn.textContent = em;
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      insertEmojiIntoInput(inputId, popoverId, em);
+    };
+    pop.appendChild(btn);
+  });
+  pop.classList.add("open");
+}
+
+function insertEmojiIntoInput(inputId, popoverId, emojiChar) {
+  const input = document.getElementById(inputId);
+  const pop = document.getElementById(popoverId);
+  if (pop) pop.classList.remove("open");
+  if (!input) return;
+  const maxLen = parseInt(input.getAttribute("maxlength"), 10) || 200;
+  if ((input.value + emojiChar).length <= maxLen) {
+    input.value += emojiChar;
+  }
+  input.focus();
+  if (inputId === "chatInput" && typeof handleChatTyping === "function") {
+    handleChatTyping();
+  }
+}
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".emoji-picker-wrap")) {
+    document.querySelectorAll(".emoji-popover.open").forEach(el => el.classList.remove("open"));
+  }
+});
+
+// ============================================================================
+// VERSION 24: ONLINE PRESENCE BADGE & CHALLENGE BUTTON HELPER
+// ============================================================================
+function renderPresenceAndChallengeHtml(targetName, includeChallengeBtn = true) {
+  if (!window.TavliDB || typeof window.TavliDB.getPlayerPresence !== "function") return "";
+  const tr = t();
+  const pr = window.TavliDB.getPlayerPresence(targetName);
+  const isSelf = window.TavliDB.normalizeKey(targetName) === window.TavliDB.normalizeKey(myPlayerName);
+
+  let dotClass = "presence-offline";
+  let titleText = tr.presenceOffline || "Offline";
+  if (pr && pr.online) {
+    if (pr.status === "online_idle") {
+      dotClass = "presence-green";
+      titleText = tr.presenceOnlineIdle || "Online";
+    } else if (pr.status === "hosting") {
+      dotClass = "presence-orange";
+      titleText = tr.presenceHosting || "Hosting Room";
+    } else {
+      dotClass = "presence-orange";
+      titleText = tr.presencePlaying || "In a Game";
+    }
+  }
+
+  const dotHtml = `<span class="presence-dot ${dotClass}" title="${escapeHtml(titleText)}"></span>`;
+  if (includeChallengeBtn && !isSelf && pr && pr.online && pr.status === "online_idle") {
+    const safeJs = escapeJsStr(targetName);
+    return `${dotHtml}<button type="button" class="btn-challenge-inline" onclick="event.stopPropagation(); openChallengeSetupForPlayer('${safeJs}')">${escapeHtml(tr.challengeBtnLabel || "⚔️ Challenge")}</button>`;
+  }
+  return dotHtml;
+}
+
+function openChallengeSetupForPlayer(targetName) {
+  if (!targetName) return;
+  closeLeaderboardModal();
+  closeProfileModal();
+  closeMessagesModal();
+  pendingChallengeTarget = String(targetName).trim();
+  openPlaySetupModal("CHALLENGE");
+}
+
+function getTimerLabelText(sec) {
+  const tr = t();
+  const s = parseInt(sec, 10) || 0;
+  if (s === 30) return tr.timerOpt30s || "30s";
+  if (s === 60) return tr.timerOpt60s || "60s";
+  if (s === 120) return tr.timerOpt2m || "2m";
+  if (s === 300) return tr.timerOpt5m || "5m";
+  return tr.timerOptUnlimited || "Unlimited";
+}
+
+function selectTurnTimerPref(seconds) {
+  const s = ALLOWED_TURN_TIMERS.includes(Number(seconds)) ? Number(seconds) : 0;
+  myTurnTimerPref = s;
+  localStorage.setItem("tavli_v24_turn_timer", String(s));
+  ALLOWED_TURN_TIMERS.forEach(val => {
+    const el = document.getElementById("timerOpt_" + val);
+    if (el) el.classList.toggle("active", val === s);
+  });
+}
+
+// ============================================================================
+// VERSION 24: MAIN MENU ACTIVE GAME BANNER (ONLINE & BOT RESUME / RESIGN / END)
+// ============================================================================
+function renderActiveGameBannerOnLanding() {
+  const banner = document.getElementById("activeGameResumeBanner");
+  const titleEl = document.getElementById("activeGameBannerTitle");
+  const subEl = document.getElementById("activeGameBannerSub");
+  const btnsEl = document.getElementById("activeGameBannerBtns");
+  if (!banner || !titleEl || !subEl || !btnsEl) return;
+
+  const tr = t();
+
+  // 1. Check if an Online Multiplayer Game is still active (within 5 minutes & room still active with >=1 player or spectator)
+  const roomBackup = (typeof getActiveRoomBackup === "function") ? getActiveRoomBackup() : null;
+  if (roomBackup && roomBackup.roomCode && roomBackup.state && roomBackup.state.phase !== "SET_OVER") {
+    const code = String(roomBackup.roomCode).toUpperCase();
+    const liveRm = window.TavliDB && typeof window.TavliDB.getLiveRoom === "function"
+      ? window.TavliDB.getLiveRoom(code)
+      : null;
+    const isStillConnectedInMemory = Boolean(
+      activeRoomCode &&
+      activeRoomCode.toUpperCase() === code &&
+      ((conn && conn.open) || isCloudRelayConnected || (spectatorConns && spectatorConns.some(sc => sc && sc.open)))
+    );
+
+    if (liveRm || isStillConnectedInMemory) {
+      const names = roomBackup.playerNames || { W: "Player 1", B: "Player 2" };
+      const st = roomBackup.state;
+      titleEl.textContent = tr.activeOnlineBannerTitle ? tr.activeOnlineBannerTitle(code) : `🟢 Active Online Game (Room ${code})`;
+      subEl.textContent = tr.activeOnlineBannerSub
+        ? tr.activeOnlineBannerSub(names.W || "Player 1", names.B || "Player 2", st.scoreW || 0, st.scoreB || 0, st.targetScore || 7)
+        : `${names.W} vs ${names.B} • Score: ${st.scoreW || 0} - ${st.scoreB || 0}`;
+
+      btnsEl.innerHTML = `
+        <button type="button" class="btn-resume-big" onclick="resumeActiveOnlineGameFromBanner()">${escapeHtml(tr.btnReturnToActiveGame || "▶ Return to Active Game")}</button>
+        <button type="button" class="btn-resign-big" onclick="resignActiveOnlineGameFromBanner()">${escapeHtml(tr.btnResignActiveSet || "🏳️ Resign")}</button>
+      `;
+      banner.style.display = "flex";
+      return;
+    }
+  }
+
+  // 2. Check if a Bot (vs AI) Game is currently saved/paused
+  const botBackup = (typeof getActiveBotBackup === "function") ? getActiveBotBackup() : null;
+  if (botBackup && botBackup.state && botBackup.state.phase !== "SET_OVER") {
+    const st = botBackup.state;
+    const diff = botBackup.aiDifficulty || myAiDifficulty || "MEDIUM";
+    titleEl.textContent = tr.activeBotBannerTitle ? tr.activeBotBannerTitle(diff) : `🤖 Active Game vs AI (${diff})`;
+    subEl.textContent = tr.activeBotBannerSub
+      ? tr.activeBotBannerSub(st.scoreW || 0, st.scoreB || 0, st.targetScore || 7)
+      : `Score: ${st.scoreW || 0} - ${st.scoreB || 0}`;
+
+    btnsEl.innerHTML = `
+      <button type="button" class="btn-resume-big" onclick="resumeActiveBotGameFromBanner()">${escapeHtml(tr.btnReturnToBotGame || "▶ Return to Game")}</button>
+      <button type="button" class="btn-resign-big" onclick="endActiveBotGameFromBanner()">${escapeHtml(tr.btnEndBotGame || "✕ End Game")}</button>
+    `;
+    banner.style.display = "flex";
+    return;
+  }
+
+  banner.style.display = "none";
+}
+
+// ============================================================================
+// VERSION 21–23: 7 BOARD & GAMEPLAY SETTINGS HANDLERS
 // ============================================================================
 function setActiveToggleOpt(id, isActive) {
   const el = document.getElementById(id);
@@ -73,6 +247,11 @@ function applyV21SettingsToDOM() {
   // 7. Auto-Bearoff Confirmation (v23)
   setActiveToggleOpt("btnAutoBearOffOff", !myAutoBearOff);
   setActiveToggleOpt("btnAutoBearOffOn", Boolean(myAutoBearOff));
+
+  // Turn Timer Preference (v24)
+  ALLOWED_TURN_TIMERS.forEach(val => {
+    setActiveToggleOpt("timerOpt_" + val, val === myTurnTimerPref);
+  });
 }
 
 function setPipIndexMode(mode) {
@@ -160,10 +339,6 @@ function getDisplayPointNumber(idx) {
   return step > -1 ? String(24 - step) : String(idx + 1);
 }
 
-// Dynamically positions the Tutorial Coach Panel:
-// - Desktop (>= 960px): inside .side-column where the Chat Box was (next to the board)
-// - Mobile (< 960px): inside .main-column right above the board (where it originally was)
-// Also hides the Chat Box completely whenever isTutorialMode is active.
 function syncTutorialPanelPlacement() {
   const tutPanel = document.getElementById("tutorialCoachPanel");
   const mainCol = document.getElementById("mainColumn") || document.querySelector(".main-column");
@@ -185,7 +360,6 @@ function syncTutorialPanelPlacement() {
 
   tutPanel.style.display = "flex";
   if (window.innerWidth >= 960) {
-    // Desktop: put Tutorial in the Side Column where Chat was
     if (tutPanel.parentElement !== sideCol) {
       if (adminBtn && adminBtn.parentElement === sideCol) {
         sideCol.insertBefore(tutPanel, adminBtn);
@@ -194,7 +368,6 @@ function syncTutorialPanelPlacement() {
       }
     }
   } else {
-    // Mobile: keep Tutorial in the Main Column above the board
     if (tutPanel.parentElement !== mainCol) {
       if (fevgaWarn && fevgaWarn.parentElement === mainCol) {
         mainCol.insertBefore(tutPanel, fevgaWarn);
@@ -205,7 +378,6 @@ function syncTutorialPanelPlacement() {
   }
 }
 
-// Switches between the Standalone Landing Hub and the Active Gameplay Board
 function showScreen(screenName) {
   const landing = document.getElementById("landingPage");
   const gameApp = document.getElementById("gameAppLayout");
@@ -216,6 +388,9 @@ function showScreen(screenName) {
     document.body.classList.add("in-game-mode");
     syncTutorialPanelPlacement();
     updateUnreadMessageBadges();
+    if (typeof broadcastMyPresenceHeartbeat === "function") {
+      broadcastMyPresenceHeartbeat();
+    }
     render();
   } else {
     gameApp.classList.remove("active-game");
@@ -225,6 +400,10 @@ function showScreen(screenName) {
     landing.style.display = "flex";
     checkPersistentLoginSession();
     updateUnreadMessageBadges();
+    renderActiveGameBannerOnLanding();
+    if (typeof broadcastMyPresenceHeartbeat === "function") {
+      broadcastMyPresenceHeartbeat();
+    }
   }
 }
 
@@ -451,6 +630,9 @@ async function verifyIdentityOnLanding(showSuccessHint = false) {
   updateAdminButtonVisibility();
   updateUnreadMessageBadges();
   updateHeaderLabels();
+  if (typeof broadcastMyPresenceHeartbeat === "function") {
+    broadcastMyPresenceHeartbeat();
+  }
   return true;
 }
 
@@ -521,6 +703,22 @@ function applyLanguageToUI() {
   document.getElementById("modePlakoto").textContent = tr.modePlakoto;
   document.getElementById("modeFevga").textContent = tr.modeFevga;
   document.getElementById("lblNumGames").textContent = tr.lblNumGames;
+
+  // Version 24 Turn Timer & Challenge Modal Labels
+  const setTxt = (id, val) => {
+    const el = document.getElementById(id);
+    if (el && val) el.textContent = val;
+  };
+  setTxt("lblTurnTimer", tr.lblTurnTimer);
+  setTxt("timerOpt_0", tr.timerOptUnlimited);
+  setTxt("timerOpt_30", tr.timerOpt30s);
+  setTxt("timerOpt_60", tr.timerOpt60s);
+  setTxt("timerOpt_120", tr.timerOpt2m);
+  setTxt("timerOpt_300", tr.timerOpt5m);
+  setTxt("challengeModalTitle", tr.challengeModalTitle);
+  setTxt("btnAcceptChallenge", tr.btnAcceptChallenge);
+  setTxt("btnDeclineChallenge", tr.btnDeclineChallenge);
+
   document.getElementById("lblEndTurn").textContent = tr.lblEndTurn;
   document.getElementById("optEndTurnYes").textContent = tr.optOn;
   document.getElementById("optEndTurnNo").textContent = tr.optOffAutoEnd;
@@ -582,11 +780,6 @@ function applyLanguageToUI() {
   const themeDrop = document.getElementById("themeSelectDropdown");
   if (themeDrop) themeDrop.value = myTheme;
 
-  // Version 21 Settings Labels in Settings Modal
-  const setTxt = (id, val) => {
-    const el = document.getElementById(id);
-    if (el && val) el.textContent = val;
-  };
   setTxt("lblPipIndex", tr.lblPipIndex);
   setTxt("btnPipOff", tr.optPipOff);
   setTxt("btnPipAbs", tr.optPipAbs);
@@ -628,6 +821,7 @@ function applyLanguageToUI() {
   handleNameInputCheck();
   renderColorPicker();
   applyV21SettingsToDOM();
+  renderActiveGameBannerOnLanding();
   updateHeaderLabels();
   render();
 }
@@ -712,7 +906,7 @@ function getSequenceForMode(mode) {
 }
 
 // ============================================================================
-// CLICKABLE PLAYER PROFILES & GLOBAL PLAYER MESSAGING SYSTEM (v20 / v21)
+// CLICKABLE PLAYER PROFILES, ELO & GLOBAL PLAYER MESSAGING SYSTEM (v24)
 // ============================================================================
 async function openProfileModal(targetPlayerName = null) {
   if (!targetPlayerName && !isAuthenticatedAccount && myStoreDetailsPref) {
@@ -794,6 +988,7 @@ function renderProfileModalContent(targetNameOverride = null) {
   }
 
   const s = user.stats || {};
+  const eloRating = typeof s.elo === "number" ? Math.round(s.elo) : window.TavliDB.computeBaselineEloFromStats(s);
   const setsW = s.setsWon || 0;
   const setsL = s.setsLost || 0;
   const setsTot = setsW + setsL;
@@ -817,9 +1012,10 @@ function renderProfileModalContent(targetNameOverride = null) {
   } else {
     topOpps.forEach(o => {
       const safeOppJs = escapeJsStr(o.displayName);
+      const oppPresenceHtml = renderPresenceAndChallengeHtml(o.displayName, true);
       oppRowsHtml += `
         <tr>
-          <td><span class="player-link" onclick="openPlayerProfileFromLink('${safeOppJs}')">👤 ${escapeHtml(o.displayName)}</span></td>
+          <td>${oppPresenceHtml}<span class="player-link" onclick="openPlayerProfileFromLink('${safeOppJs}')">👤 ${escapeHtml(o.displayName)}</span></td>
           <td><span style="color:#00e676;font-weight:bold;">${o.gamesWon}W</span> / <span style="color:#ff8a80;font-weight:bold;">${o.gamesLost}L</span> (${o.gamesPlayed})</td>
           <td><span style="color:#00e676;font-weight:bold;">${o.setsWon}W</span> / <span style="color:#ff8a80;font-weight:bold;">${o.setsLost}L</span> (${o.setsPlayed})</td>
         </tr>
@@ -828,8 +1024,9 @@ function renderProfileModalContent(targetNameOverride = null) {
   }
 
   const safeTargetJs = escapeJsStr(user.name);
+  const presenceHtml = renderPresenceAndChallengeHtml(user.name, !isViewingSelf);
   const headerActionsHtml = !isViewingSelf
-    ? `<div style="display:flex; gap:6px; flex-wrap:wrap;">
+    ? `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
          <button class="btn-sm" style="background:var(--valid); color:#111; padding:6px 11px;" onclick="openMessageToPlayerFromProfile('${safeTargetJs}')">${escapeHtml(tr.profSendMsgBtn(user.name))}</button>
          <button class="btn-sm" style="background:#546e7a; color:#fff; padding:6px 10px;" onclick="openProfileModal()">${escapeHtml(tr.profBackToMyProfile)}</button>
        </div>`
@@ -837,21 +1034,25 @@ function renderProfileModalContent(targetNameOverride = null) {
 
   container.innerHTML = `
     <div class="profile-name-header">
-      <span>👤 ${escapeHtml(user.name)}</span>
+      <span>${presenceHtml}👤 ${escapeHtml(user.name)} <span style="font-size:0.88rem; color:#ffe082; margin-left:6px;">(⭐ ${eloRating} ELO)</span></span>
       ${headerActionsHtml}
     </div>
 
-    <div class="stat-grid">
+    <div class="stat-grid" style="grid-template-columns: repeat(4, 1fr);">
       <div class="stat-box">
         <div class="val">${rankStr}</div>
         <div class="lbl">${tr.profRank}</div>
       </div>
       <div class="stat-box">
-        <div class="val" style="font-size:0.98rem;"><span style="color:#00e676;">${setsW}W</span> / <span style="color:#ff8a80;">${setsL}L</span> (${setsTot})</div>
+        <div class="val" style="color:#ffd54f;">⭐ ${eloRating}</div>
+        <div class="lbl">${tr.profElo || "ELO Rating"}</div>
+      </div>
+      <div class="stat-box">
+        <div class="val" style="font-size:0.95rem;"><span style="color:#00e676;">${setsW}W</span> / <span style="color:#ff8a80;">${setsL}L</span> (${setsTot})</div>
         <div class="lbl">${tr.profSets}</div>
       </div>
       <div class="stat-box">
-        <div class="val" style="font-size:0.98rem;"><span style="color:#00e676;">${gamesW}W</span> / <span style="color:#ff8a80;">${gamesL}L</span> (${gamesTot})</div>
+        <div class="val" style="font-size:0.95rem;"><span style="color:#00e676;">${gamesW}W</span> / <span style="color:#ff8a80;">${gamesL}L</span> (${gamesTot})</div>
         <div class="lbl">${tr.profGames}</div>
       </div>
     </div>
@@ -887,7 +1088,7 @@ function renderProfileModalContent(targetNameOverride = null) {
   `;
 }
 
-// --- Global Player Messages Modal (Accessible from All Screens) ---
+// --- Global Player Messages Modal ---
 async function openMessagesModal(initialPartnerName = null) {
   if (!isAuthenticatedAccount && myStoreDetailsPref) {
     await verifyIdentityOnLanding(false);
@@ -925,7 +1126,7 @@ function selectMessageThread(partnerName) {
   updateUnreadMessageBadges();
 }
 
-// --- Version 22: Live Games Lobby Modal Functions ---
+// --- Live Games Lobby Modal Functions ---
 async function openLiveGamesModal() {
   if (!isAuthenticatedAccount && myStoreDetailsPref) {
     const ok = await verifyIdentityOnLanding(false);
@@ -975,6 +1176,7 @@ function renderLiveGamesModalContent() {
     const isFull = (rm.playerCount >= 2);
     const vName = (tr.variants && tr.variants[rm.variant]) ? tr.variants[rm.variant] : (rm.variant || "PORTES");
     const specCount = Math.max(0, parseInt(rm.spectatorCount, 10) || 0);
+    const timerTxt = getTimerLabelText(rm.turnTimerSec || 0);
 
     const playersLine = isFull
       ? (tr.livePlayers2 ? tr.livePlayers2(hostName, guestName) : `${hostName} vs ${guestName} (2/2)`)
@@ -994,7 +1196,7 @@ function renderLiveGamesModalContent() {
         <div class="live-game-info">
           <div class="live-game-title">${escapeHtml(playersLine)}</div>
           <div class="live-game-meta">
-            Room: <strong>${code}</strong> • ${escapeHtml(vName)}${escapeHtml(scoreInfo)} • 👁️ ${specCount}
+            Room: <strong>${code}</strong> • ${escapeHtml(vName)}${escapeHtml(scoreInfo)} • ⏱️ ${escapeHtml(timerTxt)} • 👁️ ${specCount}
           </div>
         </div>
         <div class="live-game-actions">
@@ -1015,10 +1217,8 @@ function handleLiveRoomAction(roomCode, actionMode) {
   if (roomInput) roomInput.value = cleanCode;
 
   if (actionMode === "JOIN") {
-    // Open the Joining Player setup menu immediately with the exact room code pre-filled
     openPlaySetupModal("JOIN", cleanCode);
   } else {
-    // Spectate directly (or open spectate setup if guest auth needed)
     if (!isAuthenticatedAccount && myStoreDetailsPref) {
       openPlaySetupModal("SPECTATE", cleanCode);
     } else {
@@ -1029,7 +1229,7 @@ function handleLiveRoomAction(roomCode, actionMode) {
   }
 }
 
-// --- Version 22: Typing Field & Prefix Autocomplete for Player Messaging ---
+// --- Typing Field & Prefix Autocomplete for Player Messaging ---
 function handleMsgRecipientTyping() {
   const input = document.getElementById("msgRecipientSearchInput");
   const listEl = document.getElementById("msgRecipientAutocompleteList");
@@ -1045,7 +1245,6 @@ function handleMsgRecipientTyping() {
   const myKey = window.TavliDB.normalizeKey(myPlayerName);
   const allUsers = window.TavliDB.getAllUsers().filter(u => window.TavliDB.normalizeKey(u.name) !== myKey);
 
-  // Match users whose name starts with the typed characters first, followed by substring matches
   const startsWithMatches = allUsers.filter(u => u.name.toLowerCase().startsWith(query));
   const containsMatches = allUsers.filter(u => !u.name.toLowerCase().startsWith(query) && u.name.toLowerCase().includes(query));
   const matches = [...startsWithMatches, ...containsMatches];
@@ -1060,9 +1259,10 @@ function handleMsgRecipientTyping() {
   let itemsHtml = "";
   matches.forEach(u => {
     const safeJs = escapeJsStr(u.name);
+    const prHtml = renderPresenceAndChallengeHtml(u.name, false);
     itemsHtml += `
       <div class="msg-autocomplete-item" onclick="selectTypedMessageRecipient('${safeJs}')">
-        <span>👤 <strong>${escapeHtml(u.name)}</strong></span>
+        <span>${prHtml}👤 <strong>${escapeHtml(u.name)}</strong></span>
         <span style="font-size:0.72rem; color:var(--accent);">💬 ${escapeHtml(tr.msgStartChatBtn || "Chat")}</span>
       </div>
     `;
@@ -1147,7 +1347,6 @@ function renderMessagesModalContent() {
   const myKey = window.TavliDB.normalizeKey(myPlayerName);
   const threads = window.TavliDB.getConversationThreads(myPlayerName);
 
-  // If no partner is selected yet, default to the most recent conversation thread
   if (!activeMessagePartner && threads.length > 0) {
     activeMessagePartner = threads[0].partnerName;
     window.TavliDB.markConversationRead(myPlayerName, activeMessagePartner);
@@ -1162,13 +1361,14 @@ function renderMessagesModalContent() {
     threads.forEach(th => {
       const isAct = (th.partnerKey === activePartnerKey);
       const safePartnerJs = escapeJsStr(th.partnerName);
+      const prDot = renderPresenceAndChallengeHtml(th.partnerName, false);
       const unreadPill = th.unreadCount > 0
         ? `<span style="background:#e53935; color:#fff; border-radius:999px; padding:1px 6px; font-size:0.65rem; font-weight:900;">${th.unreadCount}</span>`
         : "";
       threadsListHtml += `
         <div class="msg-thread-item ${isAct ? "active" : ""}" onclick="selectMessageThread('${safePartnerJs}')">
           <div class="msg-thread-top">
-            <span>👤 ${escapeHtml(th.partnerName)}</span>
+            <span>${prDot}👤 ${escapeHtml(th.partnerName)}</span>
             ${unreadPill}
           </div>
           <div class="msg-thread-preview">${escapeHtml(th.lastMsg.text)}</div>
@@ -1188,6 +1388,7 @@ function renderMessagesModalContent() {
     const partnerUser = window.TavliDB.getUser(activeMessagePartner);
     const displayPartnerName = partnerUser ? partnerUser.name : activeMessagePartner;
     const safePartnerJs = escapeJsStr(displayPartnerName);
+    const partnerPrHtml = renderPresenceAndChallengeHtml(displayPartnerName, true);
 
     const allMyMsgs = window.TavliDB.getMessagesForUser(myPlayerName);
     const convMsgs = allMyMsgs.filter(m =>
@@ -1212,11 +1413,15 @@ function renderMessagesModalContent() {
 
     rightPaneHtml = `
       <div class="msg-chat-header">
-        <span>💬 ${escapeHtml(tr.msgChattingWith(displayPartnerName))}</span>
+        <span>${partnerPrHtml}💬 ${escapeHtml(tr.msgChattingWith(displayPartnerName))}</span>
         <button class="btn-sm" style="padding:4px 8px; font-size:0.72rem;" onclick="closeMessagesModal(); openProfileModal('${safePartnerJs}');">${escapeHtml(tr.msgViewProfBtn)}</button>
       </div>
       <div class="msg-chat-history" id="directMsgHistoryBox">${bubblesHtml}</div>
       <div class="chat-input-row" style="margin-top:6px;">
+        <div class="emoji-picker-wrap">
+          <button type="button" class="btn-emoji-toggle" onclick="toggleEmojiPicker('directMsgEmojiPopover', 'directMsgInput')" title="Emojis">😀</button>
+          <div class="emoji-popover" id="directMsgEmojiPopover"></div>
+        </div>
         <input type="text" id="directMsgInput" placeholder="${escapeHtml(tr.msgInputPlaceholder)}" maxlength="240" onkeydown="if(event.key==='Enter') handleSendDirectMessage()" />
         <button onclick="handleSendDirectMessage()">${escapeHtml(tr.msgSendBtn)}</button>
       </div>
@@ -1360,10 +1565,12 @@ function renderLeaderboardModalContent() {
     const isMe = window.TavliDB.normalizeKey(item.name) === window.TavliDB.normalizeKey(myPlayerName);
     const rowStyle = isMe ? "background:rgba(255,179,0,0.16); font-weight:bold;" : "";
     const safeNameJs = escapeJsStr(item.name);
+    const prAndChalHtml = renderPresenceAndChallengeHtml(item.name, true);
     rowsHtml += `
       <tr style="${rowStyle}">
         <td>#${item.rank}</td>
-        <td><span class="player-link" onclick="openPlayerProfileFromLink('${safeNameJs}')">👤 ${escapeHtml(item.name)}</span></td>
+        <td>${prAndChalHtml}<span class="player-link" onclick="openPlayerProfileFromLink('${safeNameJs}')">👤 ${escapeHtml(item.name)}</span></td>
+        <td style="color:#ffd54f; font-weight:800;">⭐ ${item.elo}</td>
         <td>${item.setsWon} / ${item.setsPlayed}</td>
         <td>${item.gamesWon} / ${item.gamesPlayed}</td>
         <td style="color:var(--accent); font-weight:bold;">${Math.round(item.overallWinRate)}%</td>
@@ -1385,6 +1592,7 @@ function renderLeaderboardModalContent() {
         <tr>
           <th>${tr.colRank}</th>
           <th>${tr.colPlayer}</th>
+          <th>${tr.colElo || "ELO"}</th>
           <th>${tr.colSets}</th>
           <th>${tr.colGames}</th>
           <th>${tr.colWinRate}</th>
@@ -1396,7 +1604,7 @@ function renderLeaderboardModalContent() {
   `;
 }
 
-// --- Sotiris Admin Database Manager ---
+// --- Sotiris Admin Database Manager (Includes ELO Column) ---
 async function openAdminModal() {
   if (!isAuthenticatedAccount || !window.TavliDB.isAdminName(myPlayerName)) return;
   adminCurrentPage = 1;
@@ -1453,6 +1661,7 @@ function renderAdminTable() {
     const idx = startIdx + pageOffset;
     const k = window.TavliDB.normalizeKey(u.name);
     const s = u.stats || {};
+    const eloVal = typeof s.elo === "number" ? Math.round(s.elo) : 1200;
     const vP = (s.variants && s.variants.PORTES) || { won: 0, played: 0 };
     const vPl = (s.variants && s.variants.PLAKOTO) || { won: 0, played: 0 };
     const vF = (s.variants && s.variants.FEVGA) || { won: 0, played: 0 };
@@ -1461,6 +1670,7 @@ function renderAdminTable() {
       <tr>
         <td><input type="text" class="admin-input" id="adm_name_${idx}" value="${escapeHtml(u.name)}" /></td>
         <td><input type="password" class="admin-input" id="adm_pin_${idx}" value="" placeholder="🔒 Hashed" maxlength="4" /></td>
+        <td><input type="number" class="admin-input" id="adm_elo_${idx}" value="${eloVal}" min="100" /></td>
         <td><input type="number" class="admin-input" id="adm_sw_${idx}" value="${s.setsWon || 0}" min="0" /></td>
         <td><input type="number" class="admin-input" id="adm_sl_${idx}" value="${s.setsLost || 0}" min="0" /></td>
         <td><input type="number" class="admin-input" id="adm_gw_${idx}" value="${s.gamesWon || 0}" min="0" /></td>
@@ -1505,7 +1715,8 @@ function renderAdminTable() {
       <thead>
         <tr>
           <th>Name</th>
-          <th style="width:78px;">New PIN</th>
+          <th style="width:74px;">New PIN</th>
+          <th style="width:66px;">ELO</th>
           <th>Sets W</th>
           <th>Sets L</th>
           <th>Games W</th>
@@ -1592,6 +1803,7 @@ function adminDeleteSingleOpponent(userKey, oppKey) {
 }
 
 async function adminSaveRow(originalKey, idx) {
+  const elo = parseInt(document.getElementById(`adm_elo_${idx}`).value, 10) || 1200;
   const sw = parseInt(document.getElementById(`adm_sw_${idx}`).value, 10) || 0;
   const sl = parseInt(document.getElementById(`adm_sl_${idx}`).value, 10) || 0;
   const gw = parseInt(document.getElementById(`adm_gw_${idx}`).value, 10) || 0;
@@ -1600,6 +1812,7 @@ async function adminSaveRow(originalKey, idx) {
   const fields = {
     name: document.getElementById(`adm_name_${idx}`).value,
     newPin: document.getElementById(`adm_pin_${idx}`).value,
+    elo,
     setsWon: sw,
     setsLost: sl,
     setsPlayed: sw + sl,
@@ -1946,7 +2159,6 @@ function render() {
   document.getElementById("targetB").textContent = state.targetScore || 7;
   document.getElementById("gameTitle").textContent = tr.variants[v] || v;
 
-  // Version 21: Update Real-Time Pip Counters for both players
   const pipElW = document.getElementById("pipCountW");
   const pipElB = document.getElementById("pipCountB");
   const pipsW = calculatePipCount("W");
@@ -2060,7 +2272,6 @@ function renderPoint(idx) {
   el.setAttribute("data-pt-idx", idx);
   if (selectedFrom === idx) el.classList.add("selected");
 
-  // Version 21: Render Point Number (Pip Index 1–24)
   if (myPipIndexMode !== "OFF") {
     const numEl = document.createElement("div");
     numEl.className = "point-num";

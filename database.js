@@ -1,20 +1,25 @@
-// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, Deduplicated Stats, Live Games Lobby & Global Messaging (database.js — v23)
+// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, ELO Rating, Online Presence, Direct Challenges, Live Rooms & Global Messaging (database.js — v24)
 // Always points to: https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json
 
 const TAVLI_DB_STORAGE_KEY = "tavli_players_database_v1";
 const TAVLI_CLOUD_URL_KEY  = "tavli_cloud_server_url_v1";
 const TAVLI_HASH_SALT      = "GreekTavli_SHA256_Salt_2026_v2";
-const LIVE_ROOM_TTL_MS     = 3 * 60 * 1000; // 3 minutes TTL without heartbeat
+const LIVE_ROOM_TTL_MS     = 5 * 60 * 1000; // 5 minutes TTL while at least 1 player or spectator keeps room alive
+const PRESENCE_TTL_MS      = 65 * 1000;     // 65 seconds online presence heartbeat window
+const CHALLENGE_TTL_MS     = 90 * 1000;     // 90 seconds challenge validity window
+const DEFAULT_ELO          = 1200;
 
 // PERMANENT FIREBASE REALTIME DATABASE ENDPOINT:
 const DEFAULT_CLOUD_ENDPOINT = "https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json";
 
 const INITIAL_TAVLI_DATABASE = {
-  version: 4,
+  version: 5,
   lastUpdated: Date.now(),
   users: {},
   messages: [],
   liveRooms: {},
+  presence: {},
+  challenges: {},
   processedWinEvents: {}
 };
 
@@ -45,15 +50,11 @@ window.TavliDB = {
         if (!this.data || typeof this.data.users !== "object") {
           this.data = JSON.parse(JSON.stringify(INITIAL_TAVLI_DATABASE));
         }
-        if (!Array.isArray(this.data.messages)) {
-          this.data.messages = [];
-        }
-        if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") {
-          this.data.liveRooms = {};
-        }
-        if (!this.data.processedWinEvents || typeof this.data.processedWinEvents !== "object") {
-          this.data.processedWinEvents = {};
-        }
+        if (!Array.isArray(this.data.messages)) this.data.messages = [];
+        if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") this.data.liveRooms = {};
+        if (!this.data.presence || typeof this.data.presence !== "object") this.data.presence = {};
+        if (!this.data.challenges || typeof this.data.challenges !== "object") this.data.challenges = {};
+        if (!this.data.processedWinEvents || typeof this.data.processedWinEvents !== "object") this.data.processedWinEvents = {};
       } catch (e) {
         this.data = JSON.parse(JSON.stringify(INITIAL_TAVLI_DATABASE));
       }
@@ -68,22 +69,52 @@ window.TavliDB = {
     return this.data;
   },
 
+  computeBaselineEloFromStats(s) {
+    if (!s) return DEFAULT_ELO;
+    const sw = parseInt(s.setsWon, 10) || 0;
+    const sl = parseInt(s.setsLost, 10) || 0;
+    const gw = parseInt(s.gamesWon, 10) || 0;
+    const gl = parseInt(s.gamesLost, 10) || 0;
+    if (sw === 0 && sl === 0 && gw === 0 && gl === 0) return DEFAULT_ELO;
+    const raw = DEFAULT_ELO + (sw - sl) * 24 + (gw - gl) * 8;
+    return Math.max(800, raw);
+  },
+
   sanitizeAllStatsConsistency() {
     if (!this.data || !this.data.users) return;
     if (!Array.isArray(this.data.messages)) this.data.messages = [];
     if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") this.data.liveRooms = {};
+    if (!this.data.presence || typeof this.data.presence !== "object") this.data.presence = {};
+    if (!this.data.challenges || typeof this.data.challenges !== "object") this.data.challenges = {};
     if (!this.data.processedWinEvents || typeof this.data.processedWinEvents !== "object") this.data.processedWinEvents = {};
 
-    // Prune stale live rooms older than LIVE_ROOM_TTL_MS
     const now = Date.now();
+    // Prune rooms that are closed, have 0 players & 0 spectators, or exceeded 5-minute TTL
     Object.keys(this.data.liveRooms).forEach(code => {
       const rm = this.data.liveRooms[code];
-      if (!rm || !rm.roomCode || rm.closed || (now - (rm.updatedAt || 0) > LIVE_ROOM_TTL_MS)) {
+      const pCount = rm ? (parseInt(rm.playerCount, 10) || 0) : 0;
+      const sCount = rm ? (parseInt(rm.spectatorCount, 10) || 0) : 0;
+      if (!rm || !rm.roomCode || rm.closed || (pCount <= 0 && sCount <= 0) || (now - (rm.updatedAt || 0) > LIVE_ROOM_TTL_MS)) {
         delete this.data.liveRooms[code];
       }
     });
 
-    // Keep processedWinEvents bounded to last 500 entries
+    // Prune stale presence entries older than 5 minutes
+    Object.keys(this.data.presence).forEach(k => {
+      const pr = this.data.presence[k];
+      if (!pr || (now - (pr.updatedAt || 0) > 5 * 60 * 1000)) {
+        delete this.data.presence[k];
+      }
+    });
+
+    // Prune expired challenges
+    Object.keys(this.data.challenges).forEach(k => {
+      const ch = this.data.challenges[k];
+      if (!ch || (now - (ch.ts || 0) > CHALLENGE_TTL_MS)) {
+        delete this.data.challenges[k];
+      }
+    });
+
     const evKeys = Object.keys(this.data.processedWinEvents);
     if (evKeys.length > 500) {
       evKeys
@@ -102,6 +133,12 @@ window.TavliDB = {
       s.gamesWon = Math.max(0, parseInt(s.gamesWon, 10) || 0);
       s.gamesLost = Math.max(0, parseInt(s.gamesLost, 10) || 0);
       s.gamesPlayed = s.gamesWon + s.gamesLost;
+
+      if (typeof s.elo !== "number" || Number.isNaN(s.elo) || s.elo < 100) {
+        s.elo = this.computeBaselineEloFromStats(s);
+      } else {
+        s.elo = Math.round(s.elo);
+      }
 
       if (s.opponents && typeof s.opponents === "object") {
         Object.values(s.opponents).forEach(opp => {
@@ -325,7 +362,10 @@ window.TavliDB = {
       const remTime = Number(remRoom.updatedAt) || 0;
       const locTime = locRoom ? (Number(locRoom.updatedAt) || 0) : 0;
 
-      if (remRoom.closed) {
+      const pCount = parseInt(remRoom.playerCount, 10) || 0;
+      const sCount = parseInt(remRoom.spectatorCount, 10) || 0;
+
+      if (remRoom.closed || (pCount <= 0 && sCount <= 0)) {
         if (!locRoom || remTime >= locTime) {
           delete this.data.liveRooms[cleanCode];
         }
@@ -345,6 +385,49 @@ window.TavliDB = {
     });
   },
 
+  mergePresenceMap(remotePresence) {
+    if (!remotePresence || typeof remotePresence !== "object") return;
+    if (!this.data) this.init();
+    if (!this.data.presence || typeof this.data.presence !== "object") {
+      this.data.presence = {};
+    }
+    const now = Date.now();
+    Object.entries(remotePresence).forEach(([k, remPr]) => {
+      if (!remPr || !k) return;
+      const key = this.normalizeKey(k);
+      const remTime = Number(remPr.updatedAt) || 0;
+      if (now - remTime > 5 * 60 * 1000) return;
+      const locPr = this.data.presence[key];
+      const locTime = locPr ? (Number(locPr.updatedAt) || 0) : 0;
+      if (!locPr || remTime >= locTime) {
+        this.data.presence[key] = JSON.parse(JSON.stringify(remPr));
+      }
+    });
+  },
+
+  mergeChallengesMap(remoteChallenges) {
+    if (!remoteChallenges || typeof remoteChallenges !== "object") return;
+    if (!this.data) this.init();
+    if (!this.data.challenges || typeof this.data.challenges !== "object") {
+      this.data.challenges = {};
+    }
+    const now = Date.now();
+    Object.entries(remoteChallenges).forEach(([k, remCh]) => {
+      if (!remCh || !k) return;
+      const key = this.normalizeKey(k);
+      const remTime = Number(remCh.ts) || 0;
+      if (now - remTime > CHALLENGE_TTL_MS) {
+        delete this.data.challenges[key];
+        return;
+      }
+      const locCh = this.data.challenges[key];
+      const locTime = locCh ? (Number(locCh.ts) || 0) : 0;
+      if (!locCh || remTime >= locTime) {
+        this.data.challenges[key] = JSON.parse(JSON.stringify(remCh));
+      }
+    });
+  },
+
   async mergeFullDatabase(remoteDB, saveToLocal = true) {
     if (!remoteDB || typeof remoteDB.users !== "object") return;
     if (!this.data) this.init();
@@ -359,6 +442,7 @@ window.TavliDB = {
 
       if (!remUser.stats) {
         remUser.stats = {
+          elo: DEFAULT_ELO,
           setsPlayed: 0, setsWon: 0, setsLost: 0,
           gamesPlayed: 0, gamesWon: 0, gamesLost: 0,
           variants: { PORTES: { played: 0, won: 0 }, PLAKOTO: { played: 0, won: 0 }, FEVGA: { played: 0, won: 0 } },
@@ -368,6 +452,9 @@ window.TavliDB = {
       if (!remUser.stats.opponents) remUser.stats.opponents = {};
       if (!remUser.stats.variants) {
         remUser.stats.variants = { PORTES: { played: 0, won: 0 }, PLAKOTO: { played: 0, won: 0 }, FEVGA: { played: 0, won: 0 } };
+      }
+      if (typeof remUser.stats.elo !== "number") {
+        remUser.stats.elo = this.computeBaselineEloFromStats(remUser.stats);
       }
 
       const locUser = this.data.users[k];
@@ -385,7 +472,9 @@ window.TavliDB = {
         const remGames = ((remUser.stats && remUser.stats.gamesWon) || 0) + ((remUser.stats && remUser.stats.gamesLost) || 0);
         const locGames = ((locUser.stats && locUser.stats.gamesWon) || 0) + ((locUser.stats && locUser.stats.gamesLost) || 0);
         const remSets  = ((remUser.stats && remUser.stats.setsWon) || 0) + ((remUser.stats && remUser.stats.setsLost) || 0);
-        const locSets  = ((locUser.stats && locUser.stats.setsWon) || 0) + ((locUser.stats && locUser.stats.setsLost) || 0);
+        const locSets  = ((localUserStatsCheck(locUser).setsWon) || 0) + ((localUserStatsCheck(locUser).setsLost) || 0);
+
+        function localUserStatsCheck(u) { return u.stats || {}; }
 
         if (remTime > locTime || remGames > locGames || remSets > locSets) {
           locUser.name = remUser.name;
@@ -401,6 +490,14 @@ window.TavliDB = {
 
     if (remoteDB.liveRooms && typeof remoteDB.liveRooms === "object") {
       this.mergeLiveRoomsMap(remoteDB.liveRooms);
+    }
+
+    if (remoteDB.presence && typeof remoteDB.presence === "object") {
+      this.mergePresenceMap(remoteDB.presence);
+    }
+
+    if (remoteDB.challenges && typeof remoteDB.challenges === "object") {
+      this.mergeChallengesMap(remoteDB.challenges);
     }
 
     if (remoteDB.processedWinEvents && typeof remoteDB.processedWinEvents === "object") {
@@ -425,7 +522,6 @@ window.TavliDB = {
   async pushRoomSignalPacket(roomCode, targetRole, packet) {
     const code = String(roomCode || "").trim().toUpperCase();
     if (!code || !targetRole || !packet) return false;
-    // Use POST so Firebase appends each packet in chronological order without ever overwriting previous packets!
     const url = this.getSubPathUrl(`roomSignals/${encodeURIComponent(code)}/${encodeURIComponent(targetRole)}`);
     if (!url) return false;
     const envelope = {
@@ -459,7 +555,6 @@ window.TavliDB = {
       if (!res.ok) return [];
       const data = await res.json();
       if (!data || typeof data !== "object") return [];
-      // Convert Firebase push-id map (or single object) into a chronologically sorted array of envelopes
       if (data.id && data.packet) return [data];
       return Object.values(data)
         .filter(item => item && item.id && item.packet)
@@ -482,22 +577,200 @@ window.TavliDB = {
     }
   },
 
-  // --- Version 22: Live Games Lobby Registry ---
+  // --- Version 24: Online Presence & Direct Match Challenges ---
+  async updatePlayerPresence(playerName, status = "online_idle", roomCode = null) {
+    const cleanName = String(playerName || "").trim();
+    const key = this.normalizeKey(cleanName);
+    if (!key || this.isAiPlayerName(cleanName)) return false;
+    if (!this.data) this.init();
+    if (!this.data.presence) this.data.presence = {};
+
+    const entry = {
+      name: cleanName,
+      key,
+      status: String(status || "online_idle"), // 'online_idle' | 'hosting' | 'playing'
+      roomCode: roomCode ? String(roomCode).trim().toUpperCase() : null,
+      updatedAt: Date.now()
+    };
+    this.data.presence[key] = entry;
+    this.saveLocalOnly();
+
+    const subUrl = this.getSubPathUrl(`presence/${encodeURIComponent(key)}`);
+    if (subUrl) {
+      try {
+        const res = await fetch(subUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(entry)
+        });
+        if (res.ok) return true;
+      } catch (_) {}
+    }
+    return false;
+  },
+
+  getPlayerPresence(playerName) {
+    if (!this.data) this.init();
+    const key = this.normalizeKey(playerName);
+    if (!key) return { status: "offline", online: false };
+    const now = Date.now();
+
+    // Check if the player is actively in a live room first
+    const rooms = this.getLiveRooms();
+    for (const rm of rooms) {
+      const isHost = this.normalizeKey(rm.hostName) === key;
+      const isGuest = rm.guestName && this.normalizeKey(rm.guestName) === key;
+      if (isHost || isGuest) {
+        if ((rm.playerCount || 1) >= 2) {
+          return { status: "playing", online: true, roomCode: rm.roomCode };
+        }
+        return { status: "hosting", online: true, roomCode: rm.roomCode };
+      }
+    }
+
+    const pr = this.data.presence ? this.data.presence[key] : null;
+    if (!pr || (now - (pr.updatedAt || 0) > PRESENCE_TTL_MS)) {
+      return { status: "offline", online: false };
+    }
+    return {
+      status: pr.status || "online_idle",
+      online: true,
+      roomCode: pr.roomCode || null
+    };
+  },
+
+  async sendDirectChallenge(challengeObj) {
+    if (!challengeObj || !challengeObj.from || !challengeObj.to || !challengeObj.roomCode) return false;
+    if (!this.data) this.init();
+    if (!this.data.challenges) this.data.challenges = {};
+
+    const toKey = this.normalizeKey(challengeObj.to);
+    const payload = {
+      id: "CHAL-" + Date.now() + "-" + Math.floor(Math.random() * 10000),
+      from: String(challengeObj.from).trim(),
+      fromKey: this.normalizeKey(challengeObj.from),
+      to: String(challengeObj.to).trim(),
+      toKey,
+      roomCode: String(challengeObj.roomCode).trim().toUpperCase(),
+      gameMode: String(challengeObj.gameMode || "FULL"),
+      targetScore: parseInt(challengeObj.targetScore, 10) || 7,
+      turnTimerSec: parseInt(challengeObj.turnTimerSec, 10) || 0,
+      status: "PENDING",
+      ts: Date.now()
+    };
+
+    this.data.challenges[toKey] = payload;
+    this.saveLocalOnly();
+
+    const subUrl = this.getSubPathUrl(`challenges/${encodeURIComponent(toKey)}`);
+    if (subUrl) {
+      try {
+        const res = await fetch(subUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) return payload;
+      } catch (_) {}
+    }
+    await this.save();
+    return payload;
+  },
+
+  async getChallengeForUser(userName) {
+    const key = this.normalizeKey(userName);
+    if (!key) return null;
+    const subUrl = this.getSubPathUrl(`challenges/${encodeURIComponent(key)}`);
+    if (subUrl) {
+      try {
+        const res = await fetch(subUrl, {
+          method: "GET",
+          headers: { "Accept": "application/json" },
+          cache: "no-store"
+        });
+        if (res.ok) {
+          const remoteCh = await res.json();
+          if (remoteCh && remoteCh.id) {
+            if (!this.data.challenges) this.data.challenges = {};
+            this.data.challenges[key] = remoteCh;
+          } else if (remoteCh === null && this.data.challenges) {
+            delete this.data.challenges[key];
+          }
+        }
+      } catch (_) {}
+    }
+    const ch = this.data.challenges ? this.data.challenges[key] : null;
+    if (!ch) return null;
+    if (Date.now() - (ch.ts || 0) > CHALLENGE_TTL_MS) {
+      await this.clearChallengeForUser(userName);
+      return null;
+    }
+    return ch;
+  },
+
+  async updateChallengeStatus(targetUserName, newStatus) {
+    const key = this.normalizeKey(targetUserName);
+    if (!key) return false;
+    const ch = this.data.challenges ? this.data.challenges[key] : null;
+    if (ch) {
+      ch.status = newStatus;
+      ch.ts = Date.now();
+      this.saveLocalOnly();
+    }
+    const subUrl = this.getSubPathUrl(`challenges/${encodeURIComponent(key)}`);
+    if (subUrl && ch) {
+      try {
+        await fetch(subUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(ch)
+        });
+      } catch (_) {}
+    }
+    return true;
+  },
+
+  async clearChallengeForUser(userName) {
+    const key = this.normalizeKey(userName);
+    if (!key) return false;
+    if (this.data && this.data.challenges) {
+      delete this.data.challenges[key];
+      this.saveLocalOnly();
+    }
+    const subUrl = this.getSubPathUrl(`challenges/${encodeURIComponent(key)}`);
+    if (subUrl) {
+      try {
+        await fetch(subUrl, { method: "DELETE" });
+      } catch (_) {}
+    }
+    return true;
+  },
+
+  // --- Live Games Lobby Registry (Room stays active as long as >=1 player or spectator is in it) ---
   async upsertLiveRoom(roomInfo) {
     if (!roomInfo || !roomInfo.roomCode) return false;
     if (!this.data) this.init();
     if (!this.data.liveRooms) this.data.liveRooms = {};
 
     const code = String(roomInfo.roomCode).trim().toUpperCase();
+    const pCount = roomInfo.playerCount !== undefined ? Math.max(0, parseInt(roomInfo.playerCount, 10) || 0) : 1;
+    const sCount = Math.max(0, parseInt(roomInfo.spectatorCount, 10) || 0);
+
+    // If neither players nor spectators remain in the room, remove the room immediately
+    if (pCount <= 0 && sCount <= 0) {
+      return this.removeLiveRoom(code);
+    }
+
     const entry = {
       roomCode: code,
       hostName: String(roomInfo.hostName || "Player 1").trim().slice(0, 16),
       guestName: roomInfo.guestName ? String(roomInfo.guestName).trim().slice(0, 16) : null,
-      playerCount: roomInfo.playerCount === 2 ? 2 : 1,
-      spectatorCount: Math.max(0, parseInt(roomInfo.spectatorCount, 10) || 0),
+      playerCount: pCount,
+      spectatorCount: sCount,
       variant: String(roomInfo.variant || "PORTES"),
       gameMode: String(roomInfo.gameMode || "FULL"),
       targetScore: parseInt(roomInfo.targetScore, 10) || 7,
+      turnTimerSec: parseInt(roomInfo.turnTimerSec, 10) || 0,
       scoreW: parseInt(roomInfo.scoreW, 10) || 0,
       scoreB: parseInt(roomInfo.scoreB, 10) || 0,
       updatedAt: Date.now(),
@@ -538,6 +811,19 @@ window.TavliDB = {
     return true;
   },
 
+  getLiveRoom(roomCode) {
+    if (!roomCode) return null;
+    if (!this.data) this.init();
+    const code = String(roomCode).trim().toUpperCase();
+    const rm = this.data.liveRooms ? this.data.liveRooms[code] : null;
+    if (!rm || rm.closed) return null;
+    const pCount = parseInt(rm.playerCount, 10) || 0;
+    const sCount = parseInt(rm.spectatorCount, 10) || 0;
+    if (pCount <= 0 && sCount <= 0) return null;
+    if (Date.now() - (rm.updatedAt || 0) > LIVE_ROOM_TTL_MS) return null;
+    return rm;
+  },
+
   getLiveRooms() {
     if (!this.data) this.init();
     if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") return [];
@@ -545,13 +831,14 @@ window.TavliDB = {
     const active = [];
     Object.entries(this.data.liveRooms).forEach(([code, rm]) => {
       if (!rm || rm.closed) return;
-      if (now - (rm.updatedAt || 0) <= LIVE_ROOM_TTL_MS) {
+      const pCount = parseInt(rm.playerCount, 10) || 0;
+      const sCount = parseInt(rm.spectatorCount, 10) || 0;
+      if ((pCount > 0 || sCount > 0) && (now - (rm.updatedAt || 0) <= LIVE_ROOM_TTL_MS)) {
         active.push(rm);
       } else {
         delete this.data.liveRooms[code];
       }
     });
-    // Sort open 1-player rooms first, then newest updated
     active.sort((a, b) => {
       if ((a.playerCount || 1) !== (b.playerCount || 1)) {
         return (a.playerCount || 1) - (b.playerCount || 1);
@@ -599,6 +886,7 @@ window.TavliDB = {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       stats: {
+        elo: DEFAULT_ELO,
         setsPlayed: 0,
         setsWon: 0,
         setsLost: 0,
@@ -743,6 +1031,9 @@ window.TavliDB = {
     delete user.pin;
 
     user.name = cleanNewName;
+    if (updatedFields.elo !== undefined) {
+      user.stats.elo = Math.max(100, parseInt(updatedFields.elo, 10) || DEFAULT_ELO);
+    }
     user.stats.setsWon = Math.max(0, parseInt(updatedFields.setsWon, 10) || 0);
     user.stats.setsLost = Math.max(0, parseInt(updatedFields.setsLost, 10) || 0);
     user.stats.setsPlayed = user.stats.setsWon + user.stats.setsLost;
@@ -844,11 +1135,30 @@ window.TavliDB = {
     return user.stats.opponents[oppKey];
   },
 
-  // --- Version 22: Idempotent, Single-Increment Game & Set Outcome Recording ---
-  // Guarantees 100% that:
-  // 1. Winning 1 game (whether Moni +1 or Diplo +2) ALWAYS adds +1 game win / +1 game loss.
-  // 2. Winning a set (even when exceeding the target score, e.g., winning Diplo on a 1-game set or 8 pts on a 7-game set) ALWAYS adds +1 set win / +1 set loss.
-  // 3. Each unique winEv.id is processed AT MOST ONCE across local and remote syncs.
+  _applyEloUpdateBetweenPlayers(wName, bName, wWon, kFactor = 16) {
+    const uW = this.getUser(wName);
+    const uB = this.getUser(bName);
+    if (!uW && !uB) return;
+
+    const eloW = (uW && uW.stats && typeof uW.stats.elo === "number") ? uW.stats.elo : DEFAULT_ELO;
+    const eloB = (uB && uB.stats && typeof uB.stats.elo === "number") ? uB.stats.elo : DEFAULT_ELO;
+
+    const expectedW = 1 / (1 + Math.pow(10, (eloB - eloW) / 400));
+    const expectedB = 1 - expectedW;
+
+    const actualW = wWon ? 1 : 0;
+    const actualB = wWon ? 0 : 1;
+
+    if (uW && uW.stats) {
+      uW.stats.elo = Math.max(800, Math.round(eloW + kFactor * (actualW - expectedW)));
+      uW.updatedAt = Date.now();
+    }
+    if (uB && uB.stats) {
+      uB.stats.elo = Math.max(800, Math.round(eloB + kFactor * (actualB - expectedB)));
+      uB.updatedAt = Date.now();
+    }
+  },
+
   recordWinEventOnce(winEv) {
     if (!winEv || !winEv.id) return false;
     if (!this.data) this.init();
@@ -856,7 +1166,7 @@ window.TavliDB = {
 
     const evId = String(winEv.id);
     if (this.data.processedWinEvents[evId]) {
-      return false; // Already recorded!
+      return false;
     }
 
     const wName = String(winEv.nameW || "Player 1").trim();
@@ -868,16 +1178,16 @@ window.TavliDB = {
     const wWon = winEv.winner === "W";
     const variant = winEv.variant || "PORTES";
 
-    // Always increment by exactly 1 game (even if Diplo +2 pts)
     if (!winEv.forfeitSetOnly) {
       this._applySingleGameIncrement(wName, bName, variant, wWon);
       this._applySingleGameIncrement(bName, wName, variant, !wWon);
+      this._applyEloUpdateBetweenPlayers(wName, bName, wWon, 14);
     }
 
-    // Always increment by exactly 1 set when the set is won (even if points exceed targetScore)
     if (winEv.matchOver) {
       this._applySingleSetIncrement(wName, bName, wWon);
       this._applySingleSetIncrement(bName, wName, !wWon);
+      this._applyEloUpdateBetweenPlayers(wName, bName, wWon, 24);
     }
 
     this.save();
@@ -1059,10 +1369,12 @@ window.TavliDB = {
     return changed;
   },
 
+  // --- Version 24: Leaderboard Sorted by ELO (All Other Stats Preserved) ---
   getLeaderboard() {
     if (!this.data) this.init();
     const list = Object.values(this.data.users).map(u => {
       const s = u.stats || {};
+      const elo = typeof s.elo === "number" ? Math.round(s.elo) : this.computeBaselineEloFromStats(s);
       const setsWon = s.setsWon || 0;
       const setsLost = s.setsLost || 0;
       const setsPlayed = setsWon + setsLost;
@@ -1073,6 +1385,7 @@ window.TavliDB = {
       const gameWinRate = gamesPlayed > 0 ? (gamesWon / gamesPlayed) * 100 : 0;
       return {
         name: u.name,
+        elo,
         setsPlayed,
         setsWon,
         setsLost,
@@ -1086,6 +1399,7 @@ window.TavliDB = {
     });
 
     list.sort((a, b) => {
+      if (b.elo !== a.elo) return b.elo - a.elo;
       if (b.setsWon !== a.setsWon) return b.setsWon - a.setsWon;
       if (Math.abs(b.overallWinRate - a.overallWinRate) > 0.01) return b.overallWinRate - a.overallWinRate;
       if (b.gamesWon !== a.gamesWon) return b.gamesWon - a.gamesWon;
@@ -1100,7 +1414,7 @@ window.TavliDB = {
     if (!key) return null;
     const lb = this.getLeaderboard();
     const found = lb.find(entry => this.normalizeKey(entry.name) === key);
-    return found ? { rank: found.rank, total: lb.length } : null;
+    return found ? { rank: found.rank, total: lb.length, elo: found.elo } : null;
   },
 
   getTopOpponents(name, limit = 3) {
@@ -1137,6 +1451,8 @@ window.TavliDB = {
       users: snapshot,
       messages: Array.isArray(this.data.messages) ? this.data.messages.slice(-200) : [],
       liveRooms: this.data.liveRooms || {},
+      presence: this.data.presence || {},
+      challenges: this.data.challenges || {},
       processedWinEvents: this.data.processedWinEvents || {}
     };
   },
@@ -1149,6 +1465,9 @@ window.TavliDB = {
     const usersMap = remoteSnapshot.users || remoteSnapshot;
     Object.entries(usersMap).forEach(([k, remUser]) => {
       if (!remUser || !remUser.name || !remUser.stats) return;
+      if (typeof remUser.stats.elo !== "number") {
+        remUser.stats.elo = this.computeBaselineEloFromStats(remUser.stats);
+      }
       const localUser = this.data.users[k];
       if (!localUser) {
         this.data.users[k] = {
@@ -1188,6 +1507,14 @@ window.TavliDB = {
       this.mergeLiveRoomsMap(remoteSnapshot.liveRooms);
     }
 
+    if (remoteSnapshot.presence && typeof remoteSnapshot.presence === "object") {
+      this.mergePresenceMap(remoteSnapshot.presence);
+    }
+
+    if (remoteSnapshot.challenges && typeof remoteSnapshot.challenges === "object") {
+      this.mergeChallengesMap(remoteSnapshot.challenges);
+    }
+
     if (remoteSnapshot.processedWinEvents && typeof remoteSnapshot.processedWinEvents === "object") {
       if (!this.data.processedWinEvents) this.data.processedWinEvents = {};
       Object.entries(remoteSnapshot.processedWinEvents).forEach(([evId, ts]) => {
@@ -1223,6 +1550,8 @@ window.TavliDB = {
       this.data = parsed;
       if (!Array.isArray(this.data.messages)) this.data.messages = [];
       if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") this.data.liveRooms = {};
+      if (!this.data.presence || typeof this.data.presence !== "object") this.data.presence = {};
+      if (!this.data.challenges || typeof this.data.challenges !== "object") this.data.challenges = {};
       if (!this.data.processedWinEvents || typeof this.data.processedWinEvents !== "object") this.data.processedWinEvents = {};
       this.sanitizeAllStatsConsistency();
       await this.migrateLegacyPlaintextPins();

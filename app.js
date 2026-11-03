@@ -1,4 +1,4 @@
-// e-Tavli — Core Game Engine, Fevga Rules, AI, Single-Tap Auto-Advance, Forced Auto-Bearoff, Live Games Lobby Sync & WebRTC/Cloud Multiplayer (app.js — v23)
+// e-Tavli — Core Game Engine, Fevga Rules, AI, Turn Timers, 3-Strike Inactivity Forfeit, Main-Menu Resume/Resign, Doubles Stats, Online Presence, Direct Challenges & WebRTC/Cloud Multiplayer (app.js — v24)
 
 const PEER_CONFIG = {
   pingInterval: 5000,
@@ -28,6 +28,8 @@ let state = {
   variantSequence: ["PORTES", "PLAKOTO", "FEVGA"],
   variantIdx: 0,
   targetScore: 7,
+  turnTimerSec: 0,
+  missedTurns: { W: 0, B: 0 },
   scoreW: 0,
   scoreB: 0,
   phase: "ROLL_OFF",
@@ -47,6 +49,7 @@ let state = {
   fevgaPassed: { W: false, B: false },
   setGamesLog: [],
   setRollCounts: { W: {}, B: {} },
+  setDoublesCount: { W: 0, B: 0 },
   lastAction: "INIT",
   lastMoveAnim: null,
   lastWinEvent: null,
@@ -73,11 +76,23 @@ let activeRoomCode = "";
 let opponentLeftHandled = false;
 let localTypingTimeout = null;
 let remoteTypingTimeout = null;
-let helloRetryTimer = null;  // Handshake retry loop for reliable Spectator & Joiner connection
-let clientConnectRetryTimer = null; // Automatic WebRTC connection retry timer if channel hangs or Host isn't ready yet
-let cloudRelayPollTimer = null;     // Firebase Cloud Relay polling loop (guarantees 100% connection across any 2 browsers/networks)
-let lastProcessedCloudSignalId = null;
+let helloRetryTimer = null;
+let clientConnectRetryTimer = null;
+let cloudRelayPollTimer = null;
+let processedCloudSignalIds = new Set();
 let isCloudRelayConnected = false;
+
+// --- Version 24: Turn Countdown & 3-Strike Inactivity Timers ---
+let turnCountdownInterval = null;
+let turnDeadlineTs = 0;
+let isAutoPlayingTurn = false;
+let inactivityCountdownInterval = null;
+let inactivityDeadlineTs = 0;
+let inactivityTargetRole = null;
+
+// --- Version 24: Online Presence & Incoming Challenge Polling ---
+let presenceHeartbeatTimer = null;
+let lastSeenChallengeId = null;
 
 let packetQueue = [];
 let isProcessingPacket = false;
@@ -106,10 +121,9 @@ function stopCloudRelayPolling() {
     cloudRelayPollTimer = null;
   }
   isCloudRelayConnected = false;
-  lastProcessedCloudSignalId = null;
+  processedCloudSignalIds.clear();
 }
 
-// Virtual connection object used when Firebase Cloud Relay completes the handshake before/instead of WebRTC
 function createCloudVirtualConn(targetChannel, roomCode) {
   return {
     open: true,
@@ -198,35 +212,60 @@ function startClientCloudRelayListener(code, asSpectator, onPacketCallback) {
   }, 650);
 }
 
+// ============================================================================
+// VERSION 24: LIVE ROOM HEARTBEAT (ACTIVE WHILE >=1 PLAYER OR SPECTATOR IS IN ROOM)
+// ============================================================================
 let liveRoomHeartbeatTimer = null;
 
-function publishHostLiveRoomStatus() {
-  if (myRole !== "W" || isAiMatch || isTutorialMode || !activeRoomCode) return;
+function publishLiveRoomStatusFromActiveMember() {
+  if (isAiMatch || isTutorialMode || !activeRoomCode) return;
   if (state.phase === "SET_OVER") {
-    window.TavliDB.removeLiveRoom(activeRoomCode);
+    if (myRole === "W") {
+      window.TavliDB.removeLiveRoom(activeRoomCode);
+    }
     return;
   }
-  const hasSecondPlayer = Boolean(((conn && conn.open) || isCloudRelayConnected) && !isWaitingForReconnect);
-  window.TavliDB.upsertLiveRoom({
-    roomCode: activeRoomCode,
-    hostName: playerNames.W || myPlayerName || "Player 1",
-    guestName: hasSecondPlayer ? (playerNames.B || "Player 2") : null,
-    playerCount: hasSecondPlayer ? 2 : 1,
-    spectatorCount: spectatorConns ? spectatorConns.filter(sc => sc && sc.open).length : 0,
-    variant: currentVariant(),
-    gameMode: myGameModePref || "FULL",
-    targetScore: state.targetScore || 7,
-    scoreW: state.scoreW || 0,
-    scoreB: state.scoreB || 0
-  });
+
+  if (myRole === "W") {
+    const hasSecondPlayer = Boolean(((conn && conn.open) || isCloudRelayConnected) && !isWaitingForReconnect);
+    window.TavliDB.upsertLiveRoom({
+      roomCode: activeRoomCode,
+      hostName: playerNames.W || myPlayerName || "Player 1",
+      guestName: hasSecondPlayer ? (playerNames.B || "Player 2") : null,
+      playerCount: hasSecondPlayer ? 2 : 1,
+      spectatorCount: spectatorConns ? spectatorConns.filter(sc => sc && sc.open).length : 0,
+      variant: currentVariant(),
+      gameMode: myGameModePref || "FULL",
+      targetScore: state.targetScore || 7,
+      turnTimerSec: state.turnTimerSec || 0,
+      scoreW: state.scoreW || 0,
+      scoreB: state.scoreB || 0
+    });
+  } else if (myRole === "B" || myRole === "SPECTATOR") {
+    // Keep the room alive in Firebase as long as Player 2 or a Spectator is still inside the room
+    const existingRm = window.TavliDB.getLiveRoom(activeRoomCode);
+    window.TavliDB.upsertLiveRoom({
+      roomCode: activeRoomCode,
+      hostName: playerNames.W || (existingRm && existingRm.hostName) || "Player 1",
+      guestName: playerNames.B || (existingRm && existingRm.guestName) || (myRole === "B" ? myPlayerName : null),
+      playerCount: myRole === "B" ? (isWaitingForReconnect ? 1 : 2) : (existingRm ? existingRm.playerCount : 0),
+      spectatorCount: myRole === "SPECTATOR" ? Math.max(1, state.spectatorCount || 1) : (state.spectatorCount || 0),
+      variant: currentVariant(),
+      gameMode: existingRm ? existingRm.gameMode : "FULL",
+      targetScore: state.targetScore || 7,
+      turnTimerSec: state.turnTimerSec || 0,
+      scoreW: state.scoreW || 0,
+      scoreB: state.scoreB || 0
+    });
+  }
 }
 
 function startHostLiveRoomHeartbeat() {
   stopHostLiveRoomHeartbeat();
-  publishHostLiveRoomStatus();
+  publishLiveRoomStatusFromActiveMember();
   liveRoomHeartbeatTimer = setInterval(() => {
-    publishHostLiveRoomStatus();
-  }, 25000);
+    publishLiveRoomStatusFromActiveMember();
+  }, 20000);
 }
 
 function stopHostLiveRoomHeartbeat(removeRoom = false) {
@@ -234,8 +273,12 @@ function stopHostLiveRoomHeartbeat(removeRoom = false) {
     clearInterval(liveRoomHeartbeatTimer);
     liveRoomHeartbeatTimer = null;
   }
-  if (removeRoom && activeRoomCode && myRole === "W") {
-    window.TavliDB.removeLiveRoom(activeRoomCode);
+  if (removeRoom && activeRoomCode) {
+    const openSpecs = spectatorConns ? spectatorConns.filter(sc => sc && sc.open).length : 0;
+    const hasConnectedPeer = Boolean((conn && conn.open && !isWaitingForReconnect) || openSpecs > 0);
+    if (!hasConnectedPeer) {
+      window.TavliDB.removeLiveRoom(activeRoomCode);
+    }
   }
 }
 
@@ -252,6 +295,529 @@ function updateSpectatorBadge(count) {
   }
 }
 
+// ============================================================================
+// VERSION 24: ONLINE PRESENCE HEARTBEAT & DIRECT CHALLENGE FLOW
+// ============================================================================
+function getMyCurrentPresenceStatus() {
+  const gameLayout = document.getElementById("gameAppLayout");
+  const isInGameScreen = Boolean(gameLayout && gameLayout.classList.contains("active-game"));
+
+  if (isInGameScreen && !isTutorialMode) {
+    if (isAiMatch) {
+      return { status: "playing", roomCode: null };
+    }
+    if (activeRoomCode) {
+      const hasBothPlayers = Boolean(
+        myRole === "B" ||
+        myRole === "SPECTATOR" ||
+        ((conn && conn.open) || isCloudRelayConnected)
+      );
+      return {
+        status: hasBothPlayers ? "playing" : "hosting",
+        roomCode: activeRoomCode
+      };
+    }
+  }
+  return { status: "online_idle", roomCode: null };
+}
+
+async function broadcastMyPresenceHeartbeat() {
+  if (!window.TavliDB || typeof window.TavliDB.updatePlayerPresence !== "function") return;
+  const nameToReport = isAuthenticatedAccount ? myPlayerName : (document.getElementById("playerNameInput")?.value.trim() || myPlayerName);
+  if (!nameToReport || nameToReport === "Player 1" || nameToReport === "Player 2") return;
+
+  const { status, roomCode } = getMyCurrentPresenceStatus();
+  await window.TavliDB.updatePlayerPresence(nameToReport, status, roomCode);
+
+  // Only show incoming challenges if the player is NOT currently playing
+  if (status === "online_idle") {
+    const incomingCh = await window.TavliDB.getChallengeForUser(nameToReport);
+    if (
+      incomingCh &&
+      incomingCh.status === "PENDING" &&
+      incomingCh.id !== lastSeenChallengeId &&
+      incomingCh.roomCode
+    ) {
+      lastSeenChallengeId = incomingCh.id;
+      activeIncomingChallenge = incomingCh;
+      showIncomingChallengeModal(incomingCh);
+    }
+  }
+}
+
+function showIncomingChallengeModal(ch) {
+  const modal = document.getElementById("challengeIncomingModal");
+  const desc = document.getElementById("challengeModalDesc");
+  if (!modal || !desc || !ch) return;
+
+  const { status } = getMyCurrentPresenceStatus();
+  if (status !== "online_idle") return; // Never interrupt a player who is currently playing
+
+  const tr = t();
+  const modeLabel = ch.gameMode === "FULL" ? tr.modeFull : (tr.variants[ch.gameMode] || ch.gameMode);
+  const timerLabel = typeof getTimerLabelText === "function" ? getTimerLabelText(ch.turnTimerSec || 0) : "Unlimited";
+
+  playChatSound();
+  desc.textContent = tr.challengeModalDesc
+    ? tr.challengeModalDesc(ch.from, modeLabel, ch.targetScore || 7, timerLabel)
+    : `${ch.from} challenges you to a game!`;
+  modal.style.display = "flex";
+}
+
+async function respondToIncomingChallenge(accepted) {
+  const modal = document.getElementById("challengeIncomingModal");
+  if (modal) modal.style.display = "none";
+  const ch = activeIncomingChallenge;
+  activeIncomingChallenge = null;
+  if (!ch) return;
+
+  await window.TavliDB.clearChallengeForUser(myPlayerName);
+
+  if (!accepted) {
+    if (window.TavliDB.pushRoomSignalPacket && ch.roomCode) {
+      window.TavliDB.pushRoomSignalPacket(ch.roomCode, "TO_HOST", {
+        type: "CHALLENGE_DECLINED",
+        from: myPlayerName
+      });
+    }
+    return;
+  }
+
+  closeLeaderboardModal();
+  closeProfileModal();
+  closeMessagesModal();
+  closeLiveGamesModal();
+  closePlayConfigModal();
+
+  pendingRoomFromUrl = null;
+  showScreen("GAME");
+  joinRoomWithCode(ch.roomCode, false);
+}
+
+// ============================================================================
+// VERSION 24: TURN TIMER, AUTO-AI PLAY ON TIMEOUT & 3-STRIKE INACTIVITY FORFEIT
+// ============================================================================
+function stopTurnCountdownTimer() {
+  if (turnCountdownInterval) {
+    clearInterval(turnCountdownInterval);
+    turnCountdownInterval = null;
+  }
+  const badge = document.getElementById("turnTimerBadge");
+  if (badge) {
+    badge.style.display = "none";
+    badge.classList.remove("low-time");
+  }
+}
+
+function stopInactivityForfeitCountdown() {
+  if (inactivityCountdownInterval) {
+    clearInterval(inactivityCountdownInterval);
+    inactivityCountdownInterval = null;
+  }
+  inactivityDeadlineTs = 0;
+  inactivityTargetRole = null;
+  const banner = document.getElementById("inactivityForfeitBanner");
+  if (banner) {
+    banner.style.display = "none";
+    banner.textContent = "";
+  }
+}
+
+function markPlayerActiveParticipation(role) {
+  if (!role || (role !== "W" && role !== "B")) return;
+  if (!state.missedTurns) state.missedTurns = { W: 0, B: 0 };
+  state.missedTurns[role] = 0;
+  if (inactivityTargetRole === role) {
+    stopInactivityForfeitCountdown();
+  }
+}
+
+function startInactivityForfeitCountdownForPlayer(inactiveRole) {
+  stopTurnCountdownTimer();
+  stopInactivityForfeitCountdown();
+  inactivityTargetRole = inactiveRole;
+  inactivityDeadlineTs = Date.now() + INACTIVITY_FORFEIT_MS;
+
+  const banner = document.getElementById("inactivityForfeitBanner");
+  const updateBannerText = () => {
+    if (!banner) return;
+    const remMs = Math.max(0, inactivityDeadlineTs - Date.now());
+    const mmss = formatCountdownMMSS(remMs);
+    const pName = inactiveRole === "W" ? playerNames.W : playerNames.B;
+    const tr = t();
+    banner.textContent = tr.inactivity5MinWarn
+      ? tr.inactivity5MinWarn(pName, mmss)
+      : `⚠️ ${pName} missed 3 turns in a row! ${mmss} remaining before forfeiting game & set.`;
+    banner.style.display = "block";
+  };
+
+  updateBannerText();
+  inactivityCountdownInterval = setInterval(() => {
+    if (state.phase === "SET_OVER" || isTutorialMode || isWaitingForReconnect) {
+      stopInactivityForfeitCountdown();
+      return;
+    }
+    const rem = inactivityDeadlineTs - Date.now();
+    if (rem <= 0) {
+      const loserRole = inactivityTargetRole || state.turn;
+      stopInactivityForfeitCountdown();
+      // Authoritative side triggers the inactivity forfeit
+      if (myRole === "W" || myRole === "BOTH" || myRole !== loserRole) {
+        const winnerRole = loserRole === "W" ? "B" : "W";
+        const loserName = loserRole === "W" ? playerNames.W : playerNames.B;
+        const winnerName = winnerRole === "W" ? playerNames.W : playerNames.B;
+        const reason = t().inactivityForfeitReason
+          ? t().inactivityForfeitReason(loserName, winnerName)
+          : `${loserName} forfeited due to inactivity!`;
+        forfeitCurrentGameAndSet(loserRole, reason);
+      }
+      return;
+    }
+    updateBannerText();
+  }, 1000);
+}
+
+function refreshTurnCountdownTimer() {
+  stopTurnCountdownTimer();
+  const limitSec = parseInt(state.turnTimerSec, 10) || 0;
+  if (
+    limitSec <= 0 ||
+    state.phase === "SET_OVER" ||
+    isTutorialMode ||
+    isWaitingForReconnect ||
+    isAutoPlayingTurn
+  ) {
+    return;
+  }
+
+  const activePlayer = state.turn;
+  if (isAiMatch && activePlayer === "B") return;
+
+  if (!state.missedTurns) state.missedTurns = { W: 0, B: 0 };
+  if ((state.missedTurns[activePlayer] || 0) >= 3) {
+    if (inactivityTargetRole !== activePlayer) {
+      startInactivityForfeitCountdownForPlayer(activePlayer);
+    }
+    return;
+  }
+
+  turnDeadlineTs = Date.now() + limitSec * 1000;
+  const badge = document.getElementById("turnTimerBadge");
+
+  const updateBadge = () => {
+    if (!badge) return;
+    const remMs = Math.max(0, turnDeadlineTs - Date.now());
+    const remSec = Math.ceil(remMs / 1000);
+    badge.style.display = "inline-block";
+    badge.textContent = `⏱️ ${formatCountdownMMSS(remMs)}`;
+    badge.classList.toggle("low-time", remSec <= 10);
+  };
+
+  updateBadge();
+  turnCountdownInterval = setInterval(() => {
+    if (state.phase === "SET_OVER" || isWaitingForReconnect || isTutorialMode || isAutoPlayingTurn) {
+      stopTurnCountdownTimer();
+      return;
+    }
+    const remMs = turnDeadlineTs - Date.now();
+    if (remMs <= 0) {
+      stopTurnCountdownTimer();
+      handleTurnTimerExpired();
+      return;
+    }
+    updateBadge();
+  }, 250);
+}
+
+function handleTurnTimerExpired() {
+  if (state.phase === "SET_OVER" || isWaitingForReconnect || isTutorialMode || isAutoPlayingTurn) return;
+  const timedOutRole = state.turn;
+  const isLocallyControlled = (myRole === "BOTH" || myRole === timedOutRole);
+  if (!isLocallyControlled) return;
+
+  if (!state.missedTurns) state.missedTurns = { W: 0, B: 0 };
+  state.missedTurns[timedOutRole] = (state.missedTurns[timedOutRole] || 0) + 1;
+  const strikes = state.missedTurns[timedOutRole];
+  const pName = timedOutRole === "W" ? playerNames.W : playerNames.B;
+  const tr = t();
+
+  const warnMsg = tr.turnTimeoutAutoAiChat
+    ? tr.turnTimeoutAutoAiChat(pName, strikes)
+    : `⏱️ Time expired for ${pName}! AI played automatically (${strikes}/3).`;
+  appendChatLine(tr.sysLabel, warnMsg, "SYS");
+  if (myRole === "W") {
+    broadcastFromHostToAll({ type: "SYS_CHAT", text: warnMsg });
+  } else if (conn && conn.open) {
+    conn.send({ type: "SYS_CHAT", text: warnMsg });
+  }
+
+  isAutoPlayingTurn = true;
+  if (state.phase === "ROLL_OFF") {
+    handleRoll(true, true);
+    isAutoPlayingTurn = false;
+    return;
+  }
+
+  if (!state.rolled) {
+    handleRoll(true, true);
+  } else {
+    playTurnForPlayerByAI(timedOutRole, () => {
+      isAutoPlayingTurn = false;
+    });
+  }
+}
+
+function playTurnForPlayerByAI(targetPlayer, onCompleteCallback = null) {
+  if (state.turn !== targetPlayer || !state.rolled || state.phase !== "PLAY") {
+    isAutoPlayingTurn = false;
+    if (onCompleteCallback) onCompleteCallback();
+    return;
+  }
+
+  const allSeqs = generateAllLegalTurnSequences(state, targetPlayer);
+  if (allSeqs.length === 0 || allSeqs[0].steps.length === 0) {
+    isAutoPlayingTurn = false;
+    handleEndTurn(true);
+    if (onCompleteCallback) onCompleteCallback();
+    return;
+  }
+
+  let chosen = allSeqs[0];
+  let bestScore = -Infinity;
+  for (const item of allSeqs) {
+    if (item.instantWin) { chosen = item; break; }
+    const noise = myAiDifficulty === "EASY" ? (Math.random() * 120 - 60) : (myAiDifficulty === "MEDIUM" ? (Math.random() * 28 - 14) : 0);
+    const sc = evaluateStateProbability(item.finalState, targetPlayer) + noise;
+    if (sc > bestScore) { bestScore = sc; chosen = item; }
+  }
+
+  const stepsQueue = [...chosen.steps];
+  function runNextAutoStep() {
+    if (stepsQueue.length === 0 || state.turn !== targetPlayer || state.phase !== "PLAY") {
+      isAutoPlayingTurn = false;
+      if (state.turn === targetPlayer && state.phase === "PLAY") {
+        setTimeout(() => handleEndTurn(true), 280);
+      }
+      if (onCompleteCallback) onCompleteCallback();
+      return;
+    }
+    const nextStep = stepsQueue.shift();
+    executeMoveSequence([nextStep], () => {
+      if (state.turn === targetPlayer && state.phase === "PLAY" && stepsQueue.length > 0) {
+        setTimeout(runNextAutoStep, 240);
+      } else {
+        isAutoPlayingTurn = false;
+        if (state.turn === targetPlayer && state.phase === "PLAY") {
+          setTimeout(() => handleEndTurn(true), 300);
+        }
+        if (onCompleteCallback) onCompleteCallback();
+      }
+    });
+  }
+  runNextAutoStep();
+}
+
+// ============================================================================
+// VERSION 24: FORFEIT CURRENT GAME + FULL SET (PREVIOUS GAMES STILL COUNT!)
+// ============================================================================
+function forfeitCurrentGameAndSet(loserRole, reasonText) {
+  if (state.phase === "SET_OVER") return;
+  stopTurnCountdownTimer();
+  stopInactivityForfeitCountdown();
+  stopDisconnectCountdown();
+  clearActiveRoomBackup();
+  clearActiveBotBackup();
+
+  const winnerRole = loserRole === "W" ? "B" : "W";
+  const playedVariant = currentVariant();
+  const target = state.targetScore || 7;
+
+  // Award current game (+1) AND enough match score to win the full set
+  if (winnerRole === "W") {
+    state.scoreW = Math.max(state.scoreW + 1, target);
+  } else {
+    state.scoreB = Math.max(state.scoreB + 1, target);
+  }
+
+  setStatus(reasonText);
+  if (!Array.isArray(state.setGamesLog)) state.setGamesLog = [];
+  state.setGamesLog.push({
+    gameNum: state.setGamesLog.length + 1,
+    variant: playedVariant,
+    winner: winnerRole,
+    pts: 1,
+    forfeit: true
+  });
+
+  // Record 1 game win + 1 set win for this final forfeited game (all previous games in the set were already recorded as they finished)
+  let winEv = null;
+  if (!isAiMatch && !isTutorialMode) {
+    winEv = {
+      id: "FORFEIT-GAME-SET-" + Date.now() + "-" + cryptoDie(),
+      winner: winnerRole,
+      nameW: playerNames.W,
+      nameB: playerNames.B,
+      variant: playedVariant,
+      matchOver: true,
+      forfeitSetOnly: false
+    };
+    state.lastWinEvent = winEv;
+    recordWinEventToDatabase(winEv);
+  }
+
+  const summaryObj = {
+    id: "SET-" + Date.now() + "-" + cryptoDie(),
+    champRole: winnerRole,
+    scoreW: state.scoreW,
+    scoreB: state.scoreB,
+    target,
+    gamesLog: cloneState(state.setGamesLog),
+    rollCounts: cloneState(state.setRollCounts || { W: {}, B: {} }),
+    doublesCount: cloneState(state.setDoublesCount || { W: 0, B: 0 })
+  };
+
+  state.phase = "SET_OVER";
+  state.rolled = false;
+  state.dice = [];
+  state.displayDice = [];
+  state.lastSetSummary = summaryObj;
+  state.lastAction = "WIN";
+
+  publishLiveRoomStatusFromActiveMember();
+  syncState();
+  playWinFanfare();
+  render();
+  if (typeof renderActiveGameBannerOnLanding === "function") {
+    renderActiveGameBannerOnLanding();
+  }
+  const gameLayout = document.getElementById("gameAppLayout");
+  if (gameLayout && gameLayout.classList.contains("active-game")) {
+    showSetVictoryModal(summaryObj);
+  }
+}
+
+// ============================================================================
+// VERSION 24: MAIN MENU RETURN / RESIGN / BOT END HANDLERS
+// ============================================================================
+function handleReturnToMainMenuKeepGame() {
+  if (isTutorialMode || myRole === "SPECTATOR" || state.phase === "SET_OVER") {
+    handleExitToInitialMenu(true);
+    return;
+  }
+  if (isAiMatch) {
+    saveActiveBotBackup();
+    stopTurnCountdownTimer();
+    if (aiTurnTimer) { clearTimeout(aiTurnTimer); aiTurnTimer = null; }
+    showScreen("LANDING");
+    return;
+  }
+  // Online human match: save room backup and return to main menu while keeping room/connection active
+  saveActiveRoomBackup();
+  publishLiveRoomStatusFromActiveMember();
+  showScreen("LANDING");
+}
+
+function resumeActiveOnlineGameFromBanner() {
+  const backup = getActiveRoomBackup();
+  if (!backup || !backup.roomCode) {
+    renderActiveGameBannerOnLanding();
+    return;
+  }
+  const code = backup.roomCode.toUpperCase();
+  // If connection is still open in memory, simply switch back to the GAME screen
+  if (activeRoomCode === code && ((conn && conn.open) || isCloudRelayConnected || myRole === "W")) {
+    showScreen("GAME");
+    render();
+    refreshTurnCountdownTimer();
+    return;
+  }
+  // Otherwise, reconnect to the active room from backup
+  myPlayerName = backup.myPlayerName || myPlayerName;
+  showScreen("GAME");
+  if (backup.myRole === "W") {
+    hostRoom(code, backup);
+  } else {
+    joinRoomWithCode(code, false);
+  }
+}
+
+async function resignActiveOnlineGameFromBanner() {
+  const backup = getActiveRoomBackup();
+  if (!backup || !backup.roomCode || !backup.state) {
+    clearActiveRoomBackup();
+    renderActiveGameBannerOnLanding();
+    return;
+  }
+  const tr = t();
+  if (!confirm(tr.confirmResignMainMenu || "Are you sure you want to resign this game and set?")) {
+    return;
+  }
+
+  const code = backup.roomCode.toUpperCase();
+  const loserRole = backup.myRole === "B" ? "B" : "W";
+  const winnerRole = loserRole === "W" ? "B" : "W";
+  const names = backup.playerNames || { W: "Player 1", B: "Player 2" };
+  const loserName = loserRole === "W" ? names.W : names.B;
+  const winnerName = winnerRole === "W" ? names.W : names.B;
+
+  playerNames = cloneState(names);
+  state = cloneState(backup.state);
+  myRole = loserRole;
+  activeRoomCode = code;
+
+  const reason = tr.resignedSetReason
+    ? tr.resignedSetReason(loserName, winnerName)
+    : `${loserName} resigned! ${winnerName} wins the game and the set.`;
+
+  forfeitCurrentGameAndSet(loserRole, reason);
+
+  // Push final resigned state to the connected peer via Cloud Relay & WebRTC so the opponent immediately gets the win
+  const pkt = {
+    type: "STATE",
+    state: cloneState(state),
+    playerNames: cloneState(playerNames)
+  };
+  if (conn && conn.open) {
+    try { conn.send(pkt); } catch (_) {}
+  }
+  if (window.TavliDB && typeof window.TavliDB.pushRoomSignalPacket === "function") {
+    const targetChan = loserRole === "W" ? "TO_CLIENT" : "TO_HOST";
+    await window.TavliDB.pushRoomSignalPacket(code, targetChan, pkt);
+  }
+  await window.TavliDB.removeLiveRoom(code);
+  handleExitToInitialMenu(false);
+}
+
+function resumeActiveBotGameFromBanner() {
+  const botBackup = getActiveBotBackup();
+  if (!botBackup || !botBackup.state) {
+    renderActiveGameBannerOnLanding();
+    return;
+  }
+  isTutorialMode = false;
+  isAiMatch = true;
+  myRole = "W";
+  myAiDifficulty = botBackup.aiDifficulty || myAiDifficulty || "MEDIUM";
+  playerNames = cloneState(botBackup.playerNames || { W: myPlayerName, B: `AI (${myAiDifficulty})` });
+  state = cloneState(botBackup.state);
+  document.getElementById("shareBtn").style.display = "none";
+  document.getElementById("netStatus").textContent = t().netAiMode(myAiDifficulty);
+  updateSpectatorBadge(0);
+  showScreen("GAME");
+  render();
+  refreshTurnCountdownTimer();
+  checkTriggerAutoRollOrAI();
+}
+
+function endActiveBotGameFromBanner() {
+  clearActiveBotBackup();
+  if (isAiMatch) {
+    isAiMatch = false;
+    myRole = "BOTH";
+  }
+  renderActiveGameBannerOnLanding();
+}
+
 async function openPlaySetupModal(role, prefilledCode = null) {
   const tr = t();
   checkPersistentLoginSession();
@@ -262,7 +828,6 @@ async function openPlaySetupModal(role, prefilledCode = null) {
   } else if (pendingRoomFromUrl && roomInput && (role === "JOIN" || role === "SPECTATE")) {
     roomInput.value = pendingRoomFromUrl;
   } else if (!pendingRoomFromUrl && roomInput && (role === "JOIN" || role === "SPECTATE")) {
-    // Only prefill if there is a fresh backup for a room we were just in, otherwise keep clean
     const freshBackup = getActiveRoomBackup();
     roomInput.value = (freshBackup && freshBackup.roomCode) ? freshBackup.roomCode : "";
   }
@@ -296,6 +861,14 @@ async function openPlaySetupModal(role, prefilledCode = null) {
     document.getElementById("modalSubmitBtn").textContent = tr.btnStartGame;
     if (joinRoleToggle) joinRoleToggle.style.display = "none";
     if (clrSec) clrSec.style.display = "block";
+  } else if (role === "CHALLENGE") {
+    const target = pendingChallengeTarget || "Friend";
+    document.getElementById("playConfigTitle").textContent = tr.titleChallengeModal
+      ? tr.titleChallengeModal(target)
+      : `⚔️ Challenge ${target}`;
+    document.getElementById("modalSubmitBtn").textContent = tr.btnSendChallenge || "⚔️ Send Challenge & Host";
+    if (joinRoleToggle) joinRoleToggle.style.display = "none";
+    if (clrSec) clrSec.style.display = "block";
   } else if (role === "JOIN" || role === "SPECTATE") {
     if (joinRoleToggle) joinRoleToggle.style.display = "block";
     selectJoinParticipationMode(role);
@@ -306,12 +879,13 @@ async function openPlaySetupModal(role, prefilledCode = null) {
     if (clrSec) clrSec.style.display = "block";
   }
 
-  document.getElementById("hostOnlySettings").style.display = (role === "HOST" || role === "AI") ? "block" : "none";
+  document.getElementById("hostOnlySettings").style.display = (role === "HOST" || role === "CHALLENGE" || role === "AI") ? "block" : "none";
   document.getElementById("joinOnlySettings").style.display = (role === "JOIN" || role === "SPECTATE") ? "block" : "none";
   document.getElementById("aiOnlySettings").style.display = role === "AI" ? "block" : "none";
 
   renderColorPicker();
   renderTargetScorePicker();
+  selectTurnTimerPref(myTurnTimerPref);
   document.getElementById("playConfigModal").style.display = "flex";
 }
 
@@ -392,13 +966,34 @@ async function confirmStartSelectedMode() {
   localStorage.setItem("tavli_auto_roll_pref", myAutoRollPref ? "1" : "0");
   localStorage.setItem("tavli_target_score", String(myTargetScorePref));
   localStorage.setItem("tavli_game_mode", myGameModePref);
+  localStorage.setItem("tavli_v24_turn_timer", String(myTurnTimerPref));
+
+  const wasChallengeMode = (modalRole === "CHALLENGE" && pendingChallengeTarget);
+  const challengeTargetName = pendingChallengeTarget;
+  pendingChallengeTarget = null;
 
   closePlayConfigModal();
   showScreen("GAME");
 
-  if (modalRole === "HOST") {
+  if (modalRole === "HOST" || wasChallengeMode) {
+    clearActiveBotBackup();
     hostRoom();
+    if (wasChallengeMode && challengeTargetName && activeRoomCode) {
+      await window.TavliDB.sendDirectChallenge({
+        from: myPlayerName,
+        to: challengeTargetName,
+        roomCode: activeRoomCode,
+        gameMode: myGameModePref,
+        targetScore: myTargetScorePref,
+        turnTimerSec: myTurnTimerPref
+      });
+      const msg = tr.challengeSentWaiting
+        ? tr.challengeSentWaiting(challengeTargetName)
+        : `⚔️ Challenge sent to ${challengeTargetName}!`;
+      appendChatLine(tr.sysLabel, msg, "SYS");
+    }
   } else if (modalRole === "AI") {
+    clearActiveRoomBackup();
     isAiMatch = true;
     myRole = "W";
     playerNames.W = myPlayerName;
@@ -409,6 +1004,7 @@ async function confirmStartSelectedMode() {
     state.requireEndTurn = myEndTurnPref;
     state.autoRoll = myAutoRollPref;
     state.targetScore = myTargetScorePref;
+    state.turnTimerSec = myTurnTimerPref;
     state.variantSequence = getSequenceForMode(myGameModePref);
     state.variantIdx = 0;
     state.scoreW = 0;
@@ -418,6 +1014,7 @@ async function confirmStartSelectedMode() {
     document.getElementById("netStatus").textContent = tr.netAiMode(myAiDifficulty);
     updateSpectatorBadge(0);
     initGame("ROLL_OFF");
+    saveActiveBotBackup();
   }
 }
 
@@ -458,6 +1055,37 @@ function clearActiveRoomBackup() {
   localStorage.removeItem(ROOM_BACKUP_KEY);
 }
 
+function saveActiveBotBackup() {
+  if (!isAiMatch || isTutorialMode || state.phase === "SET_OVER") return;
+  try {
+    state.playerNames = { W: playerNames.W, B: playerNames.B };
+    const backup = {
+      aiDifficulty: myAiDifficulty,
+      myPlayerName,
+      playerNames: cloneState(playerNames),
+      state: cloneState(state),
+      savedAt: Date.now()
+    };
+    localStorage.setItem(BOT_BACKUP_KEY, JSON.stringify(backup));
+  } catch (_) {}
+}
+
+function getActiveBotBackup() {
+  try {
+    const raw = localStorage.getItem(BOT_BACKUP_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !parsed.state || parsed.state.phase === "SET_OVER") return null;
+    return parsed;
+  } catch (_) {
+    return null;
+  }
+}
+
+function clearActiveBotBackup() {
+  localStorage.removeItem(BOT_BACKUP_KEY);
+}
+
 function currentVariant() {
   const seq = state.variantSequence && state.variantSequence.length ? state.variantSequence : ["PORTES", "PLAKOTO", "FEVGA"];
   return seq[state.variantIdx % seq.length];
@@ -466,10 +1094,13 @@ function currentVariant() {
 function resetSetTracking() {
   state.setGamesLog = [];
   state.setRollCounts = { W: {}, B: {} };
+  state.setDoublesCount = { W: 0, B: 0 };
+  state.missedTurns = { W: 0, B: 0 };
   state.lastSetSummary = null;
   activeSetSummaryObj = null;
   myRematchVote = false;
   peerRematchVote = false;
+  stopInactivityForfeitCountdown();
 }
 
 function recordDiceComboInSet(player, d1, d2) {
@@ -479,6 +1110,11 @@ function recordDiceComboInSet(player, d1, d2) {
   const lo = Math.min(d1, d2);
   const key = `${hi}-${lo}`;
   state.setRollCounts[player][key] = (state.setRollCounts[player][key] || 0) + 1;
+
+  if (!state.setDoublesCount) state.setDoublesCount = { W: 0, B: 0 };
+  if (d1 === d2) {
+    state.setDoublesCount[player] = (state.setDoublesCount[player] || 0) + 1;
+  }
 }
 
 function getMostRolledComboStr(countsMap) {
@@ -501,10 +1137,6 @@ function recordWinEventToDatabase(winEv) {
   playerNames.W = wName;
   playerNames.B = bName;
 
-  // Idempotent single-increment recording:
-  // - Always +1 game win / +1 game loss per game (regardless of Moni +1 or Diplo +2)
-  // - Always +1 set win / +1 set loss per set (regardless of exceeding targetScore)
-  // - Deduplicated by winEv.id in TavliDB so P2P & Firebase merges never double-count
   const recorded = window.TavliDB.recordWinEventOnce({
     id: winEv.id,
     winner: winEv.winner,
@@ -567,6 +1199,7 @@ function initGame(starter = "ROLL_OFF") {
   if (rollOffTimer) { clearTimeout(rollOffTimer); rollOffTimer = null; }
   if (autoRollTimer) { clearTimeout(autoRollTimer); autoRollTimer = null; }
   if (aiTurnTimer) { clearTimeout(aiTurnTimer); aiTurnTimer = null; }
+  stopTurnCountdownTimer();
 
   const v = currentVariant();
   if (starter === "ROLL_OFF") {
@@ -604,7 +1237,9 @@ function initGame(starter = "ROLL_OFF") {
   validTargets = [];
   updateHeaderLabels();
   saveActiveRoomBackup();
+  saveActiveBotBackup();
   render();
+  refreshTurnCountdownTimer();
   checkTriggerAutoRollOrAI();
 }
 
@@ -632,15 +1267,19 @@ function checkTriggerAutoRollOrAI() {
 
   autoRollTimer = setTimeout(() => {
     if (state.autoRoll && state.phase === "PLAY" && !state.rolled && !isAnimatingDice && !isWaitingForReconnect) {
-      handleRoll();
+      handleRoll(false, false);
     }
   }, 450);
 }
 
-function handleRoll(triggeredByAi = false) {
+function handleRoll(triggeredByAi = false, isTimeoutAutoRoll = false) {
   if (myRole === "SPECTATOR" || isTutorialMode) return;
   if (state.phase === "SET_OVER" || isWaitingForReconnect || state.rolled || isAnimatingDice || isAnimatingChecker) return;
   if (!triggeredByAi && myRole !== "BOTH" && myRole !== state.turn) return;
+
+  if (!triggeredByAi && !isTimeoutAutoRoll) {
+    markPlayerActiveParticipation(state.turn);
+  }
 
   const tr = t();
 
@@ -658,6 +1297,7 @@ function handleRoll(triggeredByAi = false) {
         setStatus(tr.rolled1DieWait(playerNames.W, d, playerNames.B));
         if (myRole === "BOTH" && !isAiMatch) playTurnChime();
         render();
+        refreshTurnCountdownTimer();
         checkTriggerAutoRollOrAI();
       });
     } else {
@@ -687,12 +1327,16 @@ function handleRoll(triggeredByAi = false) {
       const curName = state.turn === "W" ? playerNames.W : playerNames.B;
       setStatus(t().noLegalMoves(curName));
       setTimeout(() => {
+        isAutoPlayingTurn = false;
         handleEndTurn(true);
       }, 1100);
       return;
     }
     render();
-    if (isAiMatch && state.turn === "B") {
+    if (isTimeoutAutoRoll) {
+      const targetP = state.turn;
+      setTimeout(() => playTurnForPlayerByAI(targetP, () => { isAutoPlayingTurn = false; }), 420);
+    } else if (isAiMatch && state.turn === "B") {
       setTimeout(() => playAiTurnSequence(), 500);
     } else {
       checkAndRunForcedAutoBearOff();
@@ -996,41 +1640,10 @@ function evaluateStateProbability(s, aiPlayer) {
 
 function playAiTurnSequence() {
   if (!isAiMatch || state.turn !== "B" || !state.rolled || state.phase !== "PLAY") return;
-
-  const allSeqs = generateAllLegalTurnSequences(state, "B");
-  if (allSeqs.length === 0 || allSeqs[0].steps.length === 0) {
-    handleEndTurn(true);
-    return;
-  }
-
-  let chosen = allSeqs[0];
-  let bestScore = -Infinity;
-  for (const item of allSeqs) {
-    if (item.instantWin) { chosen = item; break; }
-    const noise = myAiDifficulty === "EASY" ? (Math.random() * 120 - 60) : (myAiDifficulty === "MEDIUM" ? (Math.random() * 28 - 14) : 0);
-    const sc = evaluateStateProbability(item.finalState, "B") + noise;
-    if (sc > bestScore) { bestScore = sc; chosen = item; }
-  }
-
-  const stepsQueue = [...chosen.steps];
-  function runNextAiStep() {
-    if (stepsQueue.length === 0 || state.turn !== "B" || state.phase !== "PLAY") {
-      if (state.turn === "B" && state.phase === "PLAY") setTimeout(() => handleEndTurn(true), 320);
-      return;
-    }
-    const nextStep = stepsQueue.shift();
-    executeMoveSequence([nextStep], () => {
-      if (state.turn === "B" && state.phase === "PLAY" && stepsQueue.length > 0) {
-        setTimeout(runNextAiStep, 260);
-      } else if (state.turn === "B" && state.phase === "PLAY") {
-        setTimeout(() => handleEndTurn(true), 340);
-      }
-    });
-  }
-  runNextAiStep();
+  playTurnForPlayerByAI("B");
 }
 
-// --- Animations & Board Interaction (Updated in v21 for Instant / Normal / Smooth Speeds) ---
+// --- Animations & Board Interaction ---
 function animateBoardRollOffDie(side, onComplete) {
   const { diceMs } = getActiveAnimTiming();
   playDiceRattle();
@@ -1072,6 +1685,7 @@ function resolveRollOffOutcome() {
   const bRoll = state.rollOff.B;
   if (wRoll === null || bRoll === null) return;
   const tr = t();
+  stopTurnCountdownTimer();
 
   if (wRoll === bRoll) {
     setStatus(tr.rollOffTie(wRoll, bRoll));
@@ -1083,6 +1697,7 @@ function resolveRollOffOutcome() {
       state.turn = "W";
       if (myRole === "W" || myRole === "BOTH") playTurnChime();
       render();
+      refreshTurnCountdownTimer();
       checkTriggerAutoRollOrAI();
     }, 1500);
   } else {
@@ -1100,7 +1715,9 @@ function resolveRollOffOutcome() {
       if (myRole === winner || (myRole === "BOTH" && !isAiMatch)) playTurnChime();
       setStatus(t().rollOffStart(winName, state.autoRoll || (isAiMatch && winner === "B")));
       saveActiveRoomBackup();
+      saveActiveBotBackup();
       render();
+      refreshTurnCountdownTimer();
       checkTriggerAutoRollOrAI();
     }, 1500);
   }
@@ -1224,17 +1841,17 @@ function tryBearOffFromPoint(idx) {
     return a.die - b.die;
   });
 
+  markPlayerActiveParticipation(player);
   executeMoveSequence([moves[0]]);
   return true;
 }
 
-// --- Version 23: Single-Tap Auto-Advance (Largest Available Legal Die) ---
+// --- Single-Tap Auto-Advance (Largest Available Legal Die) ---
 function tryAutoAdvanceLargestDie(origin) {
   const player = state.turn;
   const singleMoves = getSingleStepMovesFrom(state, origin, player);
   if (singleMoves.length === 0) return false;
 
-  // Prefer the largest legal single-step die; if bearing off, prefer exact bear-off first or largest die
   singleMoves.sort((a, b) => {
     if (b.die !== a.die) return b.die - a.die;
     if (a.to === "OFF" && b.to !== "OFF") return -1;
@@ -1242,13 +1859,14 @@ function tryAutoAdvanceLargestDie(origin) {
     return 0;
   });
 
+  markPlayerActiveParticipation(player);
   executeMoveSequence([singleMoves[0]]);
   return true;
 }
 
-// --- Version 23: Auto-Bearoff Confirmation When No Other Legal Moves Exist ---
+// --- Auto-Bearoff Confirmation When No Other Legal Moves Exist ---
 function checkAndRunForcedAutoBearOff() {
-  if (!myAutoBearOff || isTutorialMode || myRole === "SPECTATOR") return false;
+  if (!myAutoBearOff || isTutorialMode || myRole === "SPECTATOR" || isAutoPlayingTurn) return false;
   if (state.phase !== "PLAY" || isWaitingForReconnect || !state.rolled || isAnimatingDice || isAnimatingChecker) return false;
   if (state.dice.length === 0) return false;
 
@@ -1266,7 +1884,6 @@ function checkAndRunForcedAutoBearOff() {
 
   if (allSingleMoves.length === 0) return false;
 
-  // Only auto-bearoff when EVERY legal move available on the board is a bear-off move (to === 'OFF')
   const allAreBearOff = allSingleMoves.every(m => m.to === "OFF");
   if (!allAreBearOff) return false;
 
@@ -1297,6 +1914,8 @@ function selectBar(player) {
   if (state.phase !== "PLAY" || isWaitingForReconnect || !state.rolled || isAnimatingDice || isAnimatingChecker || state.turn !== player) return;
   if (myRole !== "BOTH" && myRole !== state.turn) return;
 
+  markPlayerActiveParticipation(player);
+
   if (myTapControlMode === "AUTO_LARGEST" && state.bar[player] > 0) {
     if (tryAutoAdvanceLargestDie("BAR")) return;
   }
@@ -1310,6 +1929,8 @@ function handlePointClick(idx) {
   if (myRole === "SPECTATOR") return;
   if (state.phase !== "PLAY" || isWaitingForReconnect || !state.rolled || isAnimatingDice || isAnimatingChecker) return;
   if (myRole !== "BOTH" && myRole !== state.turn) return;
+
+  markPlayerActiveParticipation(state.turn);
 
   const now = Date.now();
   const isDoubleTap = (lastPointTap.idx === idx && (now - lastPointTap.time) < 360);
@@ -1346,7 +1967,10 @@ function attemptBearOff() {
   if (state.phase !== "PLAY" || isWaitingForReconnect || !state.rolled || isAnimatingDice || isAnimatingChecker || selectedFrom === null) return;
   if (myRole !== "BOTH" && myRole !== state.turn) return;
   const move = validTargets.find(m => m.to === "OFF");
-  if (move) executeMoveSequence(move.steps);
+  if (move) {
+    markPlayerActiveParticipation(state.turn);
+    executeMoveSequence(move.steps);
+  }
 }
 
 function executeMoveSequence(steps, onSequenceDone = null) {
@@ -1389,11 +2013,13 @@ function executeMoveSequence(steps, onSequenceDone = null) {
     }
 
     if (manaWin) {
+      isAutoPlayingTurn = false;
       finishGame(player, 2, t().manaWin, { from: startOrigin, to: finalDest, player });
       return;
     }
 
     if (bearOffWin) {
+      isAutoPlayingTurn = false;
       const pts = state.off[opp] === 0 ? 2 : 1;
       const wName = player === "W" ? playerNames.W : playerNames.B;
       finishGame(player, pts, t().gameWin(wName, pts, wName), { from: startOrigin, to: finalDest, player });
@@ -1432,6 +2058,7 @@ function handleUndo() {
   if (turnHistory.length === 0 || isWaitingForReconnect || isAnimatingDice || isAnimatingChecker) return;
   if (myRole !== "BOTH" && myRole !== state.turn) return;
 
+  markPlayerActiveParticipation(state.turn);
   state = turnHistory.pop();
   state.lastAction = "UNDO";
   state.lastMoveAnim = null;
@@ -1450,6 +2077,11 @@ function handleEndTurn(forcedOrAuto = false) {
   if (!forcedOrAuto && state.dice.length > 0 && hasAnyLegalMove(state.turn)) return;
   if (!forcedOrAuto && isFevgaStartingPrimeOccupied(state, state.turn)) return;
 
+  if (!forcedOrAuto) {
+    markPlayerActiveParticipation(state.turn);
+  }
+
+  stopTurnCountdownTimer();
   state.turn = state.turn === "W" ? "B" : "W";
   state.rolled = false;
   state.dice = [];
@@ -1470,11 +2102,14 @@ function handleEndTurn(forcedOrAuto = false) {
 
   syncState();
   render();
+  refreshTurnCountdownTimer();
   checkTriggerAutoRollOrAI();
 }
 
 function finishGame(winner, pts, reason, winningMoveAnim = null) {
   if (state.phase === "SET_OVER") return;
+  stopTurnCountdownTimer();
+  stopInactivityForfeitCountdown();
   playWinFanfare();
   const playedVariant = currentVariant();
   turnHistory = [];
@@ -1510,6 +2145,7 @@ function finishGame(winner, pts, reason, winningMoveAnim = null) {
 
   if (isMatchOver) {
     clearActiveRoomBackup();
+    clearActiveBotBackup();
     const summaryObj = {
       id: "SET-" + Date.now() + "-" + cryptoDie(),
       champRole: winner,
@@ -1517,7 +2153,8 @@ function finishGame(winner, pts, reason, winningMoveAnim = null) {
       scoreB: state.scoreB,
       target,
       gamesLog: cloneState(state.setGamesLog),
-      rollCounts: cloneState(state.setRollCounts || { W: {}, B: {} })
+      rollCounts: cloneState(state.setRollCounts || { W: {}, B: {} }),
+      doublesCount: cloneState(state.setDoublesCount || { W: 0, B: 0 })
     };
     state.phase = "SET_OVER";
     state.rolled = false;
@@ -1528,7 +2165,7 @@ function finishGame(winner, pts, reason, winningMoveAnim = null) {
     state.lastMoveAnim = winningMoveAnim;
     state.lastWinEvent = winEv;
 
-    publishHostLiveRoomStatus();
+    publishLiveRoomStatusFromActiveMember();
     syncState();
     render();
     showSetVictoryModal(summaryObj);
@@ -1538,7 +2175,7 @@ function finishGame(winner, pts, reason, winningMoveAnim = null) {
     state.lastAction = "WIN";
     state.lastMoveAnim = winningMoveAnim;
     state.lastWinEvent = winEv;
-    publishHostLiveRoomStatus();
+    publishLiveRoomStatusFromActiveMember();
     syncState();
     render();
   }
@@ -1658,6 +2295,10 @@ function renderSetVictoryModalBody() {
   const topComboW = getMostRolledComboStr(summary.rollCounts && summary.rollCounts.W);
   const topComboB = getMostRolledComboStr(summary.rollCounts && summary.rollCounts.B);
 
+  const dblsW = (summary.doublesCount && summary.doublesCount.W) || (state.setDoublesCount && state.setDoublesCount.W) || 0;
+  const dblsB = (summary.doublesCount && summary.doublesCount.B) || (state.setDoublesCount && state.setDoublesCount.B) || 0;
+  const fmtDbl = tr.doublesCountText ? tr.doublesCountText : (c => `${c} Doubles`);
+
   const allGames = summary.gamesLog || [];
   const gamesWonW = allGames.filter(g => g.winner === "W").length;
   const gamesWonB = allGames.filter(g => g.winner === "B").length;
@@ -1673,7 +2314,7 @@ function renderSetVictoryModalBody() {
   pageGames.forEach(g => {
     const wName = g.winner === "W" ? playerNames.W : playerNames.B;
     const vLabel = tr.variants[g.variant] || g.variant;
-    const ptsLabel = g.forfeit ? "Forfeit (Set Win)" : (g.pts === 2 ? "+2 (Diplo • 1 Game Win)" : "+1 (Moni • 1 Game Win)");
+    const ptsLabel = g.forfeit ? "Forfeit (Game + Set Win)" : (g.pts === 2 ? "+2 (Diplo • 1 Game Win)" : "+1 (Moni • 1 Game Win)");
     gamesRows += `
       <tr>
         <td>#${g.gameNum}</td>
@@ -1744,6 +2385,18 @@ function renderSetVictoryModalBody() {
       </div>
     </div>
 
+    <div class="sub-heading">${escapeHtml(tr.setDoublesHeading || "Doubles Rolled in This Set")}</div>
+    <div class="stat-grid" style="grid-template-columns: 1fr 1fr;">
+      <div class="stat-box">
+        <div class="val" style="font-size:1rem; color:#ffd54f;">🎯 ${escapeHtml(fmtDbl(dblsW))}</div>
+        <div class="lbl">${escapeHtml(playerNames.W)}</div>
+      </div>
+      <div class="stat-box">
+        <div class="val" style="font-size:1rem; color:#ffd54f;">🎯 ${escapeHtml(fmtDbl(dblsB))}</div>
+        <div class="lbl">${escapeHtml(playerNames.B)}</div>
+      </div>
+    </div>
+
     ${actionButtonsHtml}
   `;
 }
@@ -1756,7 +2409,7 @@ function startNewSetWithSameSettings() {
   resetSetTracking();
   initGame("ROLL_OFF");
   if (myRole === "W") {
-    publishHostLiveRoomStatus();
+    publishLiveRoomStatusFromActiveMember();
     syncState();
   }
 }
@@ -1781,9 +2434,12 @@ function handlePlayAgainSameSettings() {
 function handleExitToInitialMenu(notifyPeer = true) {
   stopHelloRetry();
   stopCloudRelayPolling();
+  stopTurnCountdownTimer();
+  stopInactivityForfeitCountdown();
   stopHostLiveRoomHeartbeat(true);
   stopDisconnectCountdown();
   clearActiveRoomBackup();
+  clearActiveBotBackup();
   isTutorialMode = false;
   if (typeof syncTutorialPanelPlacement === "function") {
     syncTutorialPanelPlacement();
@@ -1846,71 +2502,23 @@ function formatCountdownMMSS(msRemaining) {
 }
 
 function awardForfeitSetWinToConnectedPlayer() {
-  stopDisconnectCountdown();
-  clearActiveRoomBackup();
-
   const winnerRole = myRole === "B" ? "B" : "W";
   const loserRole = winnerRole === "W" ? "B" : "W";
   const winnerName = winnerRole === "W" ? playerNames.W : playerNames.B;
   const loserName = loserRole === "W" ? playerNames.W : playerNames.B;
   const tr = t();
-  const target = state.targetScore || 7;
-
-  if (winnerRole === "W") state.scoreW = Math.max(state.scoreW, target);
-  else state.scoreB = Math.max(state.scoreB, target);
-
   const reason = tr.forfeitTimeoutReason(loserName, winnerName);
-  setStatus(reason);
-
-  const playedVariant = currentVariant();
-  if (!Array.isArray(state.setGamesLog)) state.setGamesLog = [];
-  state.setGamesLog.push({
-    gameNum: state.setGamesLog.length + 1,
-    variant: playedVariant,
-    winner: winnerRole,
-    pts: 1,
-    forfeit: true
-  });
-
-  const winEv = {
-    id: "FORFEIT-" + Date.now(),
-    winner: winnerRole,
-    nameW: playerNames.W,
-    nameB: playerNames.B,
-    variant: playedVariant,
-    matchOver: true,
-    forfeitSetOnly: false
-  };
-  recordWinEventToDatabase(winEv);
-
-  const summaryObj = {
-    id: "SET-FORFEIT-" + Date.now(),
-    champRole: winnerRole,
-    scoreW: state.scoreW,
-    scoreB: state.scoreB,
-    target,
-    gamesLog: cloneState(state.setGamesLog),
-    rollCounts: cloneState(state.setRollCounts || { W: {}, B: {} })
-  };
-  state.phase = "SET_OVER";
-  state.rolled = false;
-  state.dice = [];
-  state.displayDice = [];
-  state.lastSetSummary = summaryObj;
-
-  playWinFanfare();
-  render();
-  showSetVictoryModal(summaryObj);
+  forfeitCurrentGameAndSet(loserRole, reason);
 }
 
 // ============================================================================
-// WEBRTC MULTIPLAYER & RELIABLE SPECTATOR HANDSHAKE RELAY HUB (v20 / v21)
+// WEBRTC MULTIPLAYER & RELIABLE SPECTATOR HANDSHAKE RELAY HUB (v24)
 // ============================================================================
 function safeSend(targetConn, payload) {
   if (!targetConn) return;
   if (targetConn.open) {
     try { targetConn.send(payload); } catch (_) {}
-  } else {
+  } else if (typeof targetConn.once === "function") {
     targetConn.once("open", () => {
       try { targetConn.send(payload); } catch (_) {}
     });
@@ -1938,13 +2546,15 @@ function broadcastSpectatorCountFromHost() {
   const count = spectatorConns.length;
   updateSpectatorBadge(count);
   broadcastFromHostToAll({ type: "SPECTATOR_COUNT", count });
-  publishHostLiveRoomStatus();
+  publishLiveRoomStatusFromActiveMember();
 }
 
 function hostRoom(reconnectingCode = null, restoredBackup = null) {
   ensureAudio();
   stopHelloRetry();
   stopDisconnectCountdown();
+  stopTurnCountdownTimer();
+  stopInactivityForfeitCountdown();
   isAiMatch = false;
   isTutorialMode = false;
   if (typeof syncTutorialPanelPlacement === "function") {
@@ -1982,6 +2592,7 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
     updateHeaderLabels();
     saveActiveRoomBackup();
     render();
+    refreshTurnCountdownTimer();
   } else {
     playerNames.W = myPlayerName;
     playerNames.B = "Player 2";
@@ -1993,6 +2604,7 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
     state.requireEndTurn = myEndTurnPref;
     state.autoRoll = myAutoRollPref;
     state.targetScore = myTargetScorePref;
+    state.turnTimerSec = myTurnTimerPref;
     state.variantSequence = getSequenceForMode(myGameModePref);
     state.variantIdx = 0;
     state.scoreW = 0;
@@ -2001,9 +2613,9 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
     initGame("ROLL_OFF");
   }
 
-  // Start Live Room registration & Cloud Relay listener immediately (0ms wait) so friends can join even if PeerJS signaling is slow or blocked
   startHostLiveRoomHeartbeat();
   startHostCloudRelayListener(code);
+  broadcastMyPresenceHeartbeat();
 
   peer = new Peer("tavli-net-" + code, PEER_CONFIG);
 
@@ -2011,8 +2623,7 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
     if (!conn || !conn.open) {
       document.getElementById("netStatus").textContent = t().hostingWait(activeRoomCode);
     }
-    publishHostLiveRoomStatus();
-    // Copy invite link quietly to clipboard so the browser doesn't block WebRTC with a native OS share sheet
+    publishLiveRoomStatusFromActiveMember();
     if (!restoredBackup && navigator.clipboard && navigator.clipboard.writeText) {
       const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${activeRoomCode}`;
       navigator.clipboard.writeText(inviteUrl).catch(() => {});
@@ -2032,10 +2643,8 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
   peer.on("error", err => {
     if (err && err.type === "unavailable-id") {
       if (!reconnectingCode) {
-        // Generate a fresh code if there was an extremely rare collision
         setTimeout(() => hostRoom(null, restoredBackup), 400);
       } else {
-        // Previous socket on signaling server hasn't timed out yet; retry in 1.5s
         setTimeout(() => {
           if (myRole === "W" && activeRoomCode === code && (!conn || !conn.open)) {
             hostRoom(code, restoredBackup);
@@ -2055,6 +2664,8 @@ function hostRoom(reconnectingCode = null, restoredBackup = null) {
 function joinRoomWithCode(rawCode, asSpectator = false) {
   ensureAudio();
   stopHelloRetry();
+  stopTurnCountdownTimer();
+  stopInactivityForfeitCountdown();
   stopHostLiveRoomHeartbeat(false);
   isAiMatch = false;
   isTutorialMode = false;
@@ -2070,7 +2681,6 @@ function joinRoomWithCode(rawCode, asSpectator = false) {
 
   if (!asSpectator) {
     const backup = getActiveRoomBackup(code);
-    // Only resume as Host if the saved backup is for this exact code AND the same player name
     if (
       backup &&
       backup.myRole === "W" &&
@@ -2141,10 +2751,11 @@ function joinRoomWithCode(rawCode, asSpectator = false) {
     } catch (_) {}
   };
 
-  // Start Cloud Relay handshake immediately (0ms wait) while PeerJS initializes in parallel
   conn = createCloudVirtualConn("TO_HOST", code);
   isCloudRelayConnected = true;
   setupClientConn(code, asSpectator);
+  startHostLiveRoomHeartbeat();
+  broadcastMyPresenceHeartbeat();
 
   peer = new Peer(PEER_CONFIG);
 
@@ -2160,7 +2771,6 @@ function joinRoomWithCode(rawCode, asSpectator = false) {
 
   peer.on("error", err => {
     if (activeRoomCode !== code) return;
-    // If Host peer is still registering or network hiccuped, automatically retry connection in 2s
     if (err && (err.type === "peer-unavailable" || err.type === "network" || err.type === "webrtc" || err.type === "server-error")) {
       document.getElementById("netStatus").textContent = t().connectingTo(code);
       if (clientConnectRetryTimer) clearTimeout(clientConnectRetryTimer);
@@ -2177,9 +2787,10 @@ function handleOpponentLeft() {
   if (myRole === "SPECTATOR" || isTutorialMode || opponentLeftHandled || state.phase === "SET_OVER") return;
   opponentLeftHandled = true;
   isWaitingForReconnect = true;
+  stopTurnCountdownTimer();
 
   saveActiveRoomBackup();
-  publishHostLiveRoomStatus();
+  publishLiveRoomStatusFromActiveMember();
 
   const oppName = myRole === "W" ? playerNames.B : playerNames.W;
   const tr = t();
@@ -2237,6 +2848,15 @@ function syncDatabaseWithPeer() {
 function handleHostIncomingPacket(packet, incomingConn, code) {
   if (!packet || typeof packet !== "object") return;
 
+  if (packet.type === "CHALLENGE_DECLINED") {
+    const tr = t();
+    const msg = tr.challengeDeclinedChat
+      ? tr.challengeDeclinedChat(packet.from || "Player")
+      : `✕ ${packet.from || "Player"} declined your challenge.`;
+    appendChatLine(tr.sysLabel, msg, "SYS");
+    return;
+  }
+
   const registerSpectatorAndSendAck = (rawName) => {
     const cleanName = String(rawName || "Spectator").trim().slice(0, 16) || "Spectator";
     const firstTime = !incomingConn._ackSent;
@@ -2272,7 +2892,6 @@ function handleHostIncomingPacket(packet, incomingConn, code) {
     }
     const cleanName = String(packet.name || "Friend").trim().slice(0, 16) || "Friend";
 
-    // Upgrade from virtual cloud connection to real WebRTC connection or allow same player retry
     const isSamePlayerRetrying =
       conn &&
       conn !== incomingConn &&
@@ -2324,7 +2943,7 @@ function handleHostIncomingPacket(packet, incomingConn, code) {
       }
       state.playerNames = { W: playerNames.W, B: playerNames.B };
       updateHeaderLabels();
-      publishHostLiveRoomStatus();
+      publishLiveRoomStatusFromActiveMember();
       appendChatLine(t().sysLabel, t().oppRejoinedChat(cleanName), "SYS");
       setStatus(t().oppRejoinedStatus(cleanName));
       saveActiveRoomBackup();
@@ -2341,12 +2960,14 @@ function handleHostIncomingPacket(packet, incomingConn, code) {
       syncDatabaseWithPeer();
       playTurnChime();
       render();
+      refreshTurnCountdownTimer();
       checkTriggerAutoRollOrAI();
       return;
     }
 
     updateHeaderLabels();
-    publishHostLiveRoomStatus();
+    publishLiveRoomStatusFromActiveMember();
+    broadcastMyPresenceHeartbeat();
     appendChatLine(t().sysLabel, t().joinedTableChat(cleanName), "SYS");
 
     state.scoreW = 0;
@@ -2457,7 +3078,10 @@ function setupClientConn(code, asSpectator = false, isReconnectingAttempt = fals
       }
       updateHeaderLabels();
       saveActiveRoomBackup();
+      publishLiveRoomStatusFromActiveMember();
+      broadcastMyPresenceHeartbeat();
       render();
+      refreshTurnCountdownTimer();
       return;
     }
 
@@ -2472,7 +3096,6 @@ function setupClientConn(code, asSpectator = false, isReconnectingAttempt = fals
     handleCommonPacketOnPeer(packet, conn);
   };
 
-  // 1. Immediately start Firebase Cloud Relay listener & send HELLO via Cloud Relay so connection succeeds in <1s even if WebRTC ICE is blocked on same PC / firewall
   startClientCloudRelayListener(code, asSpectator, handleIncomingClientPacket);
   if (window.TavliDB && typeof window.TavliDB.pushRoomSignalPacket === "function") {
     window.TavliDB.pushRoomSignalPacket(code, "TO_HOST", buildHelloPacket());
@@ -2501,7 +3124,6 @@ function setupClientConn(code, asSpectator = false, isReconnectingAttempt = fals
   if (!targetRtc || typeof targetRtc.on !== "function") return;
 
   const onChannelOpen = () => {
-    // Upgrade active conn to the opened direct WebRTC DataChannel
     conn = targetRtc;
     stopDisconnectCountdown();
     sendHelloPacket();
@@ -2511,7 +3133,6 @@ function setupClientConn(code, asSpectator = false, isReconnectingAttempt = fals
   if (targetRtc.open) onChannelOpen();
 
   targetRtc.on("close", () => {
-    // Fall back seamlessly to Cloud Virtual conn so gameplay never drops
     if (activeRoomCode === code && (myRole === "B" || myRole === "SPECTATOR")) {
       conn = createCloudVirtualConn("TO_HOST", code);
       isCloudRelayConnected = true;
@@ -2703,9 +3324,14 @@ function processNextStatePacket() {
     }
 
     if (state.phase === "SET_OVER" && state.lastSetSummary) {
+      stopTurnCountdownTimer();
+      stopInactivityForfeitCountdown();
       clearActiveRoomBackup();
       playWinFanfare();
       render();
+      if (typeof renderActiveGameBannerOnLanding === "function") {
+        renderActiveGameBannerOnLanding();
+      }
       showSetVictoryModal(state.lastSetSummary);
       finishPacketStep();
       return;
@@ -2719,6 +3345,7 @@ function processNextStatePacket() {
         } else if (state.turn === myRole) {
           setStatus(t().rolled1DieYourTurn(playerNames.W, state.rollOff.W));
           playTurnChime();
+          refreshTurnCountdownTimer();
         }
         finishPacketStep();
       });
@@ -2732,11 +3359,15 @@ function processNextStatePacket() {
       if (state.lastAction === "PIN") playCheckerClack("PIN");
       if (state.lastAction === "WIN") {
         playWinFanfare();
+        refreshTurnCountdownTimer();
         if (state.turn === myRole) checkTriggerAutoRollOrAI();
       }
-      if ((state.lastAction === "END_TURN" || prevTurn !== state.turn) && state.turn === myRole) {
-        playTurnChime();
-        checkTriggerAutoRollOrAI();
+      if (state.lastAction === "END_TURN" || prevTurn !== state.turn) {
+        refreshTurnCountdownTimer();
+        if (state.turn === myRole) {
+          playTurnChime();
+          checkTriggerAutoRollOrAI();
+        }
       }
       render();
       finishPacketStep();
@@ -2752,8 +3383,13 @@ function processNextStatePacket() {
 
 function notifyLeavingTab() {
   saveActiveRoomBackup();
-  if (myRole === "W" && activeRoomCode && (!conn || !conn.open || state.phase === "SET_OVER")) {
-    window.TavliDB.removeLiveRoom(activeRoomCode);
+  saveActiveBotBackup();
+  if (myRole === "W" && activeRoomCode) {
+    const openSpecs = spectatorConns ? spectatorConns.filter(sc => sc && sc.open).length : 0;
+    const hasConnectedPeer = Boolean((conn && conn.open && !isWaitingForReconnect) || openSpecs > 0);
+    if (!hasConnectedPeer || state.phase === "SET_OVER") {
+      window.TavliDB.removeLiveRoom(activeRoomCode);
+    }
   }
   if (conn && conn.open) {
     try { conn.send({ type: "BYE" }); } catch (_) {}
@@ -2770,6 +3406,7 @@ function syncState() {
   state.playerNames = { W: playerNames.W, B: playerNames.B };
 
   saveActiveRoomBackup();
+  saveActiveBotBackup();
   const pkt = {
     type: "STATE",
     state: cloneState(state),
@@ -2871,6 +3508,9 @@ window.addEventListener("DOMContentLoaded", () => {
     if (typeof updateUnreadMessageBadges === "function") {
       updateUnreadMessageBadges();
     }
+    if (typeof renderActiveGameBannerOnLanding === "function") {
+      renderActiveGameBannerOnLanding();
+    }
     if (document.getElementById("leaderboardModal").style.display === "flex") {
       renderLeaderboardModalContent();
     }
@@ -2887,12 +3527,14 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Periodically pull from Firebase every 20 seconds so new Global Messages & Unread Badges update automatically
-  setInterval(() => {
+  // Periodically sync Firebase & Online Presence every 12 seconds
+  if (presenceHeartbeatTimer) clearInterval(presenceHeartbeatTimer);
+  presenceHeartbeatTimer = setInterval(() => {
+    broadcastMyPresenceHeartbeat();
     if (window.TavliDB && typeof window.TavliDB.pullFromServer === "function") {
       window.TavliDB.pullFromServer();
     }
-  }, 20000);
+  }, 12000);
 
   const savedTheme = localStorage.getItem("tavli_theme");
   if (savedTheme) selectTheme(savedTheme);
@@ -2931,6 +3573,9 @@ window.addEventListener("DOMContentLoaded", () => {
   const savedTarget = parseInt(localStorage.getItem("tavli_target_score"), 10);
   if (ALLOWED_TARGETS.includes(savedTarget)) myTargetScorePref = savedTarget;
 
+  const savedTimer = parseInt(localStorage.getItem("tavli_v24_turn_timer"), 10);
+  if (ALLOWED_TURN_TIMERS.includes(savedTimer)) myTurnTimerPref = savedTimer;
+
   const savedMode = localStorage.getItem("tavli_game_mode");
   if (["FULL", "PORTES", "PLAKOTO", "FEVGA"].includes(savedMode)) {
     selectGameMode(savedMode);
@@ -2945,6 +3590,7 @@ window.addEventListener("DOMContentLoaded", () => {
   renderColorPicker();
   renderTargetScorePicker();
   showScreen("LANDING");
+  setTimeout(() => broadcastMyPresenceHeartbeat(), 600);
 
   const params = new URLSearchParams(window.location.search);
   const roomFromUrl = params.get("room");
@@ -2957,6 +3603,7 @@ window.addEventListener("DOMContentLoaded", () => {
     if (recentBackup && recentBackup.roomCode) {
       document.getElementById("modalRoomInput").value = recentBackup.roomCode;
     }
+    renderActiveGameBannerOnLanding();
   }
 });
 
