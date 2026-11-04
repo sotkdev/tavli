@@ -1,4 +1,4 @@
-// e-Tavli — UI, Auth, Modals, Active Game Banner, Turn Timer Selector, ELO, Online Presence, Challenges, Emoji Pickers & Board Renderer (ui.js — v24)
+// e-Tavli — UI, Auth, Modals, Active Game Banner, Turn Timer Selector, ELO, Online Presence, Challenges, Emoji Pickers & Board Renderer (ui.js — v25)
 
 function t() {
   return I18N[myLang] || I18N.en;
@@ -77,12 +77,10 @@ document.addEventListener("click", (e) => {
 // ============================================================================
 // VERSION 24: ONLINE PRESENCE BADGE & CHALLENGE BUTTON HELPER
 // ============================================================================
-function renderPresenceAndChallengeHtml(targetName, includeChallengeBtn = true) {
+function renderPresenceDotOnlyHtml(targetName) {
   if (!window.TavliDB || typeof window.TavliDB.getPlayerPresence !== "function") return "";
   const tr = t();
   const pr = window.TavliDB.getPlayerPresence(targetName);
-  const isSelf = window.TavliDB.normalizeKey(targetName) === window.TavliDB.normalizeKey(myPlayerName);
-
   let dotClass = "presence-offline";
   let titleText = tr.presenceOffline || "Offline";
   if (pr && pr.online) {
@@ -97,13 +95,48 @@ function renderPresenceAndChallengeHtml(targetName, includeChallengeBtn = true) 
       titleText = tr.presencePlaying || "In a Game";
     }
   }
+  return `<span class="presence-dot ${dotClass}" title="${escapeHtml(titleText)}"></span>`;
+}
 
-  const dotHtml = `<span class="presence-dot ${dotClass}" title="${escapeHtml(titleText)}"></span>`;
-  if (includeChallengeBtn && !isSelf && pr && pr.online && pr.status === "online_idle") {
+function renderSwordChallengeBtnHtml(targetName, swordOnly = false) {
+  if (!window.TavliDB || typeof window.TavliDB.getPlayerPresence !== "function") return "";
+  const tr = t();
+  const pr = window.TavliDB.getPlayerPresence(targetName);
+  const isSelf = window.TavliDB.normalizeKey(targetName) === window.TavliDB.normalizeKey(myPlayerName);
+  if (!isSelf && pr && pr.online && pr.status === "online_idle") {
     const safeJs = escapeJsStr(targetName);
-    return `${dotHtml}<button type="button" class="btn-challenge-inline" onclick="event.stopPropagation(); openChallengeSetupForPlayer('${safeJs}')">${escapeHtml(tr.challengeBtnLabel || "⚔️ Challenge")}</button>`;
+    if (swordOnly) {
+      return `<button type="button" class="btn-challenge-sword" title="${escapeHtml(tr.challengeBtnLabel || "Challenge")}" onclick="event.stopPropagation(); openChallengeSetupForPlayer('${safeJs}')">⚔️</button>`;
+    }
+    return `<button type="button" class="btn-challenge-inline" onclick="event.stopPropagation(); openChallengeSetupForPlayer('${safeJs}')">${escapeHtml(tr.challengeBtnLabel || "⚔️ Challenge")}</button>`;
   }
-  return dotHtml;
+  return "";
+}
+
+function renderWinStreakBadgeHtml(targetName) {
+  if (!window.TavliDB || typeof window.TavliDB.getPlayerWinStreak !== "function") return "";
+  const streak = window.TavliDB.getPlayerWinStreak(targetName);
+  if (streak <= 0) return "";
+  const tr = t();
+  const titleTxt = tr.streakBadgeTitle ? tr.streakBadgeTitle(streak) : `Winning Streak: ${streak}`;
+  return `<span class="streak-fire-badge" title="${escapeHtml(titleTxt)}">🔥 ${streak}</span>`;
+}
+
+function renderAddFriendToggleBtnHtml(targetName) {
+  if (!window.TavliDB || !targetName) return "";
+  const isSelf = window.TavliDB.normalizeKey(targetName) === window.TavliDB.normalizeKey(myPlayerName);
+  if (isSelf || window.TavliDB.isAiPlayerName(targetName)) return "";
+  const tr = t();
+  const isFr = window.TavliDB.isFriend(myPlayerName, targetName);
+  const safeJs = escapeJsStr(targetName);
+  const label = isFr ? (tr.friendsAddedBtn || "⭐ Friend") : (tr.friendsAddBtn || "+ Friend");
+  return `<button type="button" class="btn-friend-add-sm ${isFr ? "is-friend" : ""}" onclick="event.stopPropagation(); toggleFriendStatusForPlayer('${safeJs}')">${escapeHtml(label)}</button>`;
+}
+
+function renderPresenceAndChallengeHtml(targetName, includeChallengeBtn = true) {
+  const dotHtml = renderPresenceDotOnlyHtml(targetName);
+  if (!includeChallengeBtn) return dotHtml;
+  return `${dotHtml}${renderSwordChallengeBtnHtml(targetName, false)}`;
 }
 
 function openChallengeSetupForPlayer(targetName) {
@@ -111,8 +144,29 @@ function openChallengeSetupForPlayer(targetName) {
   closeLeaderboardModal();
   closeProfileModal();
   closeMessagesModal();
+  closeFriendsModal();
+  closeRoomRosterModal();
   pendingChallengeTarget = String(targetName).trim();
   openPlaySetupModal("CHALLENGE");
+}
+
+function selectPrivateRoomPref(isPriv) {
+  myPrivateRoomPref = Boolean(isPriv);
+  localStorage.setItem("tavli_v25_private_room", myPrivateRoomPref ? "1" : "0");
+  const pubEl = document.getElementById("optRoomPublic");
+  const privEl = document.getElementById("optRoomPrivate");
+  if (pubEl) pubEl.classList.toggle("active", !myPrivateRoomPref);
+  if (privEl) privEl.classList.toggle("active", myPrivateRoomPref);
+}
+
+function toggleMobileBoardRotation() {
+  isMobileBoardFlipped = !isMobileBoardFlipped;
+  const btn = document.getElementById("rotateBoardBtn");
+  if (btn) {
+    btn.style.background = isMobileBoardFlipped ? "var(--accent)" : "#5c6bc0";
+    btn.style.color = isMobileBoardFlipped ? "#111" : "#fff";
+  }
+  render();
 }
 
 function getTimerLabelText(sec) {
@@ -670,6 +724,8 @@ function applyLanguageToUI() {
   if (learnBtnEl && tr.hubBtnLearn) learnBtnEl.textContent = tr.hubBtnLearn;
 
   document.getElementById("hubBtnProfile").textContent = tr.btnProfile;
+  const hubFriendsEl = document.getElementById("hubBtnFriends");
+  if (hubFriendsEl && tr.btnFriends) hubFriendsEl.textContent = tr.btnFriends;
   document.getElementById("hubBtnLeaderboard").textContent = tr.btnLeaderboard;
   const hubMsgEl = document.getElementById("hubBtnMessages");
   if (hubMsgEl) hubMsgEl.textContent = tr.btnMessages;
@@ -718,6 +774,23 @@ function applyLanguageToUI() {
   setTxt("challengeModalTitle", tr.challengeModalTitle);
   setTxt("btnAcceptChallenge", tr.btnAcceptChallenge);
   setTxt("btnDeclineChallenge", tr.btnDeclineChallenge);
+  setTxt("lblRoomPrivacy", tr.lblRoomPrivacy);
+  setTxt("optRoomPublic", tr.optRoomPublic);
+  setTxt("optRoomPrivate", tr.optRoomPrivate);
+  setTxt("lblBtnFriends", tr.btnFriends);
+  setTxt("friendsModalTitle", tr.friendsModalTitle);
+  setTxt("friendsAddInputBtn", tr.friendsAddBtn);
+  setTxt("friendsCloseBtn", tr.closeBtn);
+  setTxt("roomRosterTitle", tr.roomRosterTitle);
+  setTxt("roomRosterCloseBtn", tr.closeBtn);
+  setTxt("roomPeopleBtn", tr.btnRoomPeople);
+  setTxt("rotateBoardBtn", tr.btnRotateBoard);
+  const frSearchEl = document.getElementById("friendsSearchInput");
+  if (frSearchEl && tr.friendsSearchPh) frSearchEl.placeholder = tr.friendsSearchPh;
+  const specMuteBtn = document.getElementById("specChatMuteBtn");
+  if (specMuteBtn) {
+    specMuteBtn.textContent = isSpectatorChatMuted ? (tr.specMuteOn || "🔇 Spec Chat: OFF") : (tr.specMuteOff || "💬 Spec Chat: ON");
+  }
 
   document.getElementById("lblEndTurn").textContent = tr.lblEndTurn;
   document.getElementById("optEndTurnYes").textContent = tr.optOn;
@@ -1012,10 +1085,12 @@ function renderProfileModalContent(targetNameOverride = null) {
   } else {
     topOpps.forEach(o => {
       const safeOppJs = escapeJsStr(o.displayName);
-      const oppPresenceHtml = renderPresenceAndChallengeHtml(o.displayName, true);
+      const oppDotHtml = renderPresenceDotOnlyHtml(o.displayName);
+      const oppStreakHtml = renderWinStreakBadgeHtml(o.displayName);
+      const oppSwordHtml = renderSwordChallengeBtnHtml(o.displayName, true);
       oppRowsHtml += `
         <tr>
-          <td>${oppPresenceHtml}<span class="player-link" onclick="openPlayerProfileFromLink('${safeOppJs}')">👤 ${escapeHtml(o.displayName)}</span></td>
+          <td>${oppDotHtml}<span class="player-link" onclick="openPlayerProfileFromLink('${safeOppJs}')">👤 ${escapeHtml(o.displayName)}</span>${oppStreakHtml}${oppSwordHtml}</td>
           <td><span style="color:#00e676;font-weight:bold;">${o.gamesWon}W</span> / <span style="color:#ff8a80;font-weight:bold;">${o.gamesLost}L</span> (${o.gamesPlayed})</td>
           <td><span style="color:#00e676;font-weight:bold;">${o.setsWon}W</span> / <span style="color:#ff8a80;font-weight:bold;">${o.setsLost}L</span> (${o.setsPlayed})</td>
         </tr>
@@ -1024,17 +1099,24 @@ function renderProfileModalContent(targetNameOverride = null) {
   }
 
   const safeTargetJs = escapeJsStr(user.name);
-  const presenceHtml = renderPresenceAndChallengeHtml(user.name, !isViewingSelf);
+  const dotHtml = renderPresenceDotOnlyHtml(user.name);
+  const swordHtml = !isViewingSelf ? renderSwordChallengeBtnHtml(user.name, true) : "";
+  const streakHtml = renderWinStreakBadgeHtml(user.name);
+  const friendBtnHtml = !isViewingSelf ? renderAddFriendToggleBtnHtml(user.name) : "";
   const headerActionsHtml = !isViewingSelf
     ? `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+         ${friendBtnHtml}
          <button class="btn-sm" style="background:var(--valid); color:#111; padding:6px 11px;" onclick="openMessageToPlayerFromProfile('${safeTargetJs}')">${escapeHtml(tr.profSendMsgBtn(user.name))}</button>
          <button class="btn-sm" style="background:#546e7a; color:#fff; padding:6px 10px;" onclick="openProfileModal()">${escapeHtml(tr.profBackToMyProfile)}</button>
        </div>`
-    : `<button class="btn-sm" style="background:#00897b; color:#fff; padding:6px 11px;" onclick="closeProfileModal(); openMessagesModal();">💬 ${escapeHtml(tr.btnMessages)}</button>`;
+    : `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+         <button class="btn-sm" style="background:#5c6bc0; color:#fff; padding:6px 11px;" onclick="closeProfileModal(); openFriendsModal();">👥 ${escapeHtml(tr.btnFriends || "Friends")}</button>
+         <button class="btn-sm" style="background:#00897b; color:#fff; padding:6px 11px;" onclick="closeProfileModal(); openMessagesModal();">💬 ${escapeHtml(tr.btnMessages)}</button>
+       </div>`;
 
   container.innerHTML = `
     <div class="profile-name-header">
-      <span>${presenceHtml}👤 ${escapeHtml(user.name)} <span style="font-size:0.88rem; color:#ffe082; margin-left:6px;">(⭐ ${eloRating} ELO)</span></span>
+      <span>${dotHtml}👤 ${escapeHtml(user.name)}${streakHtml}${swordHtml} <span style="font-size:0.88rem; color:#ffe082; margin-left:6px;">(⭐ ${eloRating} ELO)</span></span>
       ${headerActionsHtml}
     </div>
 
@@ -1538,6 +1620,229 @@ function closeLeaderboardModal() {
   document.getElementById("leaderboardModal").style.display = "none";
 }
 
+// ============================================================================
+// VERSION 25: FRIENDS LIST MODAL & IN-GAME ROOM ROSTER MODAL
+// ============================================================================
+async function toggleFriendStatusForPlayer(targetName) {
+  if (!targetName || !window.TavliDB) return;
+  const isFr = window.TavliDB.isFriend(myPlayerName, targetName);
+  if (isFr) {
+    await window.TavliDB.removeFriendAsync(myPlayerName, targetName);
+  } else {
+    await window.TavliDB.addFriendAsync(myPlayerName, targetName);
+  }
+  if (typeof syncDatabaseWithPeer === "function") {
+    syncDatabaseWithPeer();
+  }
+  if (document.getElementById("friendsModal").style.display === "flex") {
+    renderFriendsModalContent();
+  }
+  if (document.getElementById("leaderboardModal").style.display === "flex") {
+    renderLeaderboardModalContent();
+  }
+  if (document.getElementById("profileModal").style.display === "flex") {
+    renderProfileModalContent(inspectedProfileName);
+  }
+  if (document.getElementById("roomRosterModal").style.display === "flex") {
+    renderRoomRosterModalContent();
+  }
+}
+
+async function openFriendsModal() {
+  if (!isAuthenticatedAccount && myStoreDetailsPref) {
+    await verifyIdentityOnLanding(false);
+  }
+  renderFriendsModalContent();
+  document.getElementById("friendsModal").style.display = "flex";
+  await window.TavliDB.pullFromServer();
+  renderFriendsModalContent();
+}
+
+function closeFriendsModal() {
+  const modal = document.getElementById("friendsModal");
+  if (modal) modal.style.display = "none";
+}
+
+function handleFriendsSearchTyping() {
+  const input = document.getElementById("friendsSearchInput");
+  const listEl = document.getElementById("friendsAutocompleteList");
+  if (!input || !listEl) return;
+
+  const query = input.value.trim().toLowerCase();
+  if (!query) {
+    listEl.style.display = "none";
+    listEl.innerHTML = "";
+    return;
+  }
+
+  const myKey = window.TavliDB.normalizeKey(myPlayerName);
+  const allUsers = window.TavliDB.getAllUsers().filter(u => window.TavliDB.normalizeKey(u.name) !== myKey);
+  const startsWith = allUsers.filter(u => u.name.toLowerCase().startsWith(query));
+  const contains = allUsers.filter(u => !u.name.toLowerCase().startsWith(query) && u.name.toLowerCase().includes(query));
+  const matches = [...startsWith, ...contains];
+
+  const tr = t();
+  if (matches.length === 0) {
+    listEl.innerHTML = `<div class="msg-autocomplete-item" style="color:#90a4ae; cursor:default;">${escapeHtml(tr.msgNoMatchUsers || "No matching players found")}</div>`;
+    listEl.style.display = "block";
+    return;
+  }
+
+  let html = "";
+  matches.forEach(u => {
+    const safeJs = escapeJsStr(u.name);
+    const dotHtml = renderPresenceDotOnlyHtml(u.name);
+    const streakHtml = renderWinStreakBadgeHtml(u.name);
+    const isFr = window.TavliDB.isFriend(myPlayerName, u.name);
+    html += `
+      <div class="msg-autocomplete-item" onclick="selectFriendFromAutocomplete('${safeJs}')">
+        <span>${dotHtml}👤 <strong>${escapeHtml(u.name)}</strong>${streakHtml}</span>
+        <span style="font-size:0.74rem; color:${isFr ? "#00e676" : "var(--accent)"}; font-weight:800;">
+          ${escapeHtml(isFr ? (tr.friendsAddedBtn || "⭐ Friend") : (tr.friendsAddBtn || "+ Add Friend"))}
+        </span>
+      </div>
+    `;
+  });
+  listEl.innerHTML = html;
+  listEl.style.display = "block";
+}
+
+async function selectFriendFromAutocomplete(playerName) {
+  const input = document.getElementById("friendsSearchInput");
+  const listEl = document.getElementById("friendsAutocompleteList");
+  if (input) input.value = "";
+  if (listEl) listEl.style.display = "none";
+  if (!playerName) return;
+  await window.TavliDB.addFriendAsync(myPlayerName, playerName);
+  renderFriendsModalContent();
+}
+
+async function addFriendFromTypedInput() {
+  const input = document.getElementById("friendsSearchInput");
+  if (!input) return;
+  const query = input.value.trim();
+  if (!query) return;
+  const myKey = window.TavliDB.normalizeKey(myPlayerName);
+  const allUsers = window.TavliDB.getAllUsers().filter(u => window.TavliDB.normalizeKey(u.name) !== myKey);
+  const exact = allUsers.find(u => u.name.toLowerCase() === query.toLowerCase());
+  const starts = allUsers.find(u => u.name.toLowerCase().startsWith(query.toLowerCase()));
+  const targetName = exact ? exact.name : (starts ? starts.name : query);
+  await selectFriendFromAutocomplete(targetName);
+}
+
+function renderFriendsModalContent() {
+  const container = document.getElementById("friendsListContent");
+  if (!container) return;
+  const tr = t();
+  const friendsList = window.TavliDB.getFriendsDetailedList(myPlayerName);
+
+  if (friendsList.length === 0) {
+    container.innerHTML = `<p style="font-size:0.85rem; color:#90a4ae; text-align:center; padding:18px;">${escapeHtml(tr.friendsEmpty || "Your Friends list is empty.")}</p>`;
+    return;
+  }
+
+  let html = "";
+  friendsList.forEach(fr => {
+    const safeJs = escapeJsStr(fr.name);
+    const dotHtml = renderPresenceDotOnlyHtml(fr.name);
+    const streakHtml = renderWinStreakBadgeHtml(fr.name);
+    const swordHtml = renderSwordChallengeBtnHtml(fr.name, true);
+    let statusLbl = tr.presenceOffline || "Offline";
+    if (fr.presence && fr.presence.online) {
+      if (fr.presence.status === "online_idle") statusLbl = tr.presenceOnlineIdle || "Online";
+      else if (fr.presence.status === "hosting") statusLbl = tr.presenceHosting || "Hosting Room";
+      else statusLbl = tr.presencePlaying || "In a Game";
+    }
+
+    html += `
+      <div class="roster-item-row">
+        <div>
+          ${dotHtml}<span class="player-link" onclick="closeFriendsModal(); openProfileModal('${safeJs}')">👤 ${escapeHtml(fr.name)}</span>${streakHtml}${swordHtml}
+          <span style="font-size:0.75rem; color:#ffd54f; margin-left:6px;">⭐ ${fr.elo}</span>
+          <div style="font-size:0.7rem; color:#b0bec5; margin-top:2px;">${escapeHtml(statusLbl)}</div>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <button class="btn-sm" style="background:#00897b; color:#fff; padding:5px 10px;" onclick="closeFriendsModal(); openMessagesModal('${safeJs}')">💬 ${escapeHtml(tr.msgStartChatBtn || "Chat")}</button>
+          <button class="btn-sm" style="background:#546e7a; color:#fff; padding:5px 9px;" onclick="toggleFriendStatusForPlayer('${safeJs}')">${escapeHtml(tr.friendsRemoveBtn || "✕")}</button>
+        </div>
+      </div>
+    `;
+  });
+  container.innerHTML = html;
+}
+
+function openRoomRosterModal() {
+  renderRoomRosterModalContent();
+  const modal = document.getElementById("roomRosterModal");
+  if (modal) modal.style.display = "flex";
+}
+
+function closeRoomRosterModal() {
+  const modal = document.getElementById("roomRosterModal");
+  if (modal) modal.style.display = "none";
+}
+
+function renderRoomRosterModalContent() {
+  const container = document.getElementById("roomRosterContent");
+  if (!container) return;
+  const tr = t();
+
+  const wName = (playerNames && playerNames.W) ? playerNames.W : "Player 1";
+  const bName = (playerNames && playerNames.B) ? playerNames.B : "Player 2";
+  const specs = (state && Array.isArray(state.spectatorNames)) ? state.spectatorNames : [];
+
+  const buildPersonRow = (pName, roleBadge) => {
+    if (!pName || pName === "Player 2") {
+      return `
+        <div class="roster-item-row">
+          <span style="color:#90a4ae;">⏳ ${escapeHtml(pName || "Waiting...")} (${escapeHtml(roleBadge)})</span>
+        </div>
+      `;
+    }
+    const isAi = window.TavliDB.isAiPlayerName(pName);
+    const isMe = window.TavliDB.normalizeKey(pName) === window.TavliDB.normalizeKey(myPlayerName);
+    const safeJs = escapeJsStr(pName);
+    const dotHtml = isAi ? "🤖 " : renderPresenceDotOnlyHtml(pName);
+    const streakHtml = !isAi ? renderWinStreakBadgeHtml(pName) : "";
+    const friendBtn = (!isAi && !isMe) ? renderAddFriendToggleBtnHtml(pName) : "";
+    const msgBtn = (!isAi && !isMe)
+      ? `<button class="btn-sm" style="background:#00897b; color:#fff; padding:4px 8px;" onclick="closeRoomRosterModal(); openMessagesModal('${safeJs}')">💬</button>`
+      : "";
+
+    return `
+      <div class="roster-item-row">
+        <div>
+          ${dotHtml}<span class="${!isAi ? "player-link" : ""}" ${!isAi ? `onclick="closeRoomRosterModal(); openProfileModal('${safeJs}')"` : ""}>${escapeHtml(pName)}</span>${streakHtml}
+          <span style="font-size:0.7rem; color:#ffecb3; margin-left:6px;">(${escapeHtml(roleBadge)})</span>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          ${friendBtn}
+          ${msgBtn}
+        </div>
+      </div>
+    `;
+  };
+
+  let specsHtml = "";
+  if (specs.length === 0) {
+    specsHtml = `<p style="font-size:0.8rem; color:#90a4ae; padding:8px; text-align:center;">${escapeHtml(tr.roomNoSpectators || "No spectators watching right now.")}</p>`;
+  } else {
+    specs.forEach(sName => {
+      specsHtml += buildPersonRow(sName, tr.spectatorTag || "Spectator");
+    });
+  }
+
+  container.innerHTML = `
+    <div class="sub-heading">${escapeHtml(tr.roomPlayersHdr || "Players in Match")}</div>
+    ${buildPersonRow(wName, getColorMeta(state.colors.W).label)}
+    ${buildPersonRow(bName, getColorMeta(state.colors.B).label)}
+
+    <div class="sub-heading">${escapeHtml(tr.roomSpectatorsHdr || "Spectators Watching")} (${specs.length})</div>
+    ${specsHtml}
+  `;
+}
+
+
 function changeLeaderboardPage(delta) {
   lbCurrentPage += delta;
   renderLeaderboardModalContent();
@@ -1565,11 +1870,14 @@ function renderLeaderboardModalContent() {
     const isMe = window.TavliDB.normalizeKey(item.name) === window.TavliDB.normalizeKey(myPlayerName);
     const rowStyle = isMe ? "background:rgba(255,179,0,0.16); font-weight:bold;" : "";
     const safeNameJs = escapeJsStr(item.name);
-    const prAndChalHtml = renderPresenceAndChallengeHtml(item.name, true);
+    const dotHtml = renderPresenceDotOnlyHtml(item.name);
+    const streakHtml = renderWinStreakBadgeHtml(item.name);
+    const swordRightHtml = renderSwordChallengeBtnHtml(item.name, true);
+    const friendBtnHtml = renderAddFriendToggleBtnHtml(item.name);
     rowsHtml += `
       <tr style="${rowStyle}">
         <td>#${item.rank}</td>
-        <td>${prAndChalHtml}<span class="player-link" onclick="openPlayerProfileFromLink('${safeNameJs}')">👤 ${escapeHtml(item.name)}</span></td>
+        <td>${dotHtml}<span class="player-link" onclick="openPlayerProfileFromLink('${safeNameJs}')">👤 ${escapeHtml(item.name)}</span>${streakHtml}${swordRightHtml}${friendBtnHtml}</td>
         <td style="color:#ffd54f; font-weight:800;">⭐ ${item.elo}</td>
         <td>${item.setsWon} / ${item.setsPlayed}</td>
         <td>${item.gamesWon} / ${item.gamesPlayed}</td>
@@ -2159,6 +2467,19 @@ function render() {
   document.getElementById("targetB").textContent = state.targetScore || 7;
   document.getElementById("gameTitle").textContent = tr.variants[v] || v;
 
+  const sbW = document.getElementById("streakBadgeW");
+  const sbB = document.getElementById("streakBadgeB");
+  if (sbW) sbW.innerHTML = (!isAiMatch && !isTutorialMode) ? renderWinStreakBadgeHtml(playerNames.W) : "";
+  if (sbB) sbB.innerHTML = (!isAiMatch && !isTutorialMode) ? renderWinStreakBadgeHtml(playerNames.B) : "";
+
+  const specMuteBtn = document.getElementById("specChatMuteBtn");
+  if (specMuteBtn) {
+    const showSpecMute = !isAiMatch && !isTutorialMode && Boolean(activeRoomCode);
+    specMuteBtn.style.display = showSpecMute ? "inline-block" : "none";
+    specMuteBtn.textContent = isSpectatorChatMuted ? (tr.specMuteOn || "🔇 Spec Chat: OFF") : (tr.specMuteOff || "💬 Spec Chat: ON");
+    specMuteBtn.style.background = isSpectatorChatMuted ? "#d32f2f" : "#546e7a";
+  }
+
   const pipElW = document.getElementById("pipCountW");
   const pipElB = document.getElementById("pipCountB");
   const pipsW = calculatePipCount("W");
@@ -2222,7 +2543,7 @@ function render() {
   const br = document.getElementById("bottom-right");
   tl.innerHTML = ""; trEl.innerHTML = ""; bl.innerHTML = ""; br.innerHTML = "";
 
-  const isBlackView = (myRole === "B");
+  const isBlackView = ((myRole === "B") !== Boolean(isMobileBoardFlipped));
 
   if (!isBlackView) {
     for (let i = 11; i >= 6; i--) tl.appendChild(renderPoint(i));

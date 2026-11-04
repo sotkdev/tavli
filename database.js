@@ -1,4 +1,4 @@
-// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, ELO Rating, Online Presence, Direct Challenges, Live Rooms & Global Messaging (database.js — v24)
+// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, ELO Rating, Online Presence, Direct Challenges, Live Rooms & Global Messaging (database.js — v25)
 // Always points to: https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json
 
 const TAVLI_DB_STORAGE_KEY = "tavli_players_database_v1";
@@ -13,7 +13,7 @@ const DEFAULT_ELO          = 1200;
 const DEFAULT_CLOUD_ENDPOINT = "https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json";
 
 const INITIAL_TAVLI_DATABASE = {
-  version: 5,
+  version: 6,
   lastUpdated: Date.now(),
   users: {},
   messages: [],
@@ -138,6 +138,11 @@ window.TavliDB = {
         s.elo = this.computeBaselineEloFromStats(s);
       } else {
         s.elo = Math.round(s.elo);
+      }
+      s.winStreak = Math.max(0, parseInt(s.winStreak, 10) || 0);
+      s.bestWinStreak = Math.max(s.winStreak, parseInt(s.bestWinStreak, 10) || 0);
+      if (!Array.isArray(u.friends)) {
+        u.friends = [];
       }
 
       if (s.opponents && typeof s.opponents === "object") {
@@ -456,6 +461,9 @@ window.TavliDB = {
       if (typeof remUser.stats.elo !== "number") {
         remUser.stats.elo = this.computeBaselineEloFromStats(remUser.stats);
       }
+      remUser.stats.winStreak = Math.max(0, parseInt(remUser.stats.winStreak, 10) || 0);
+      remUser.stats.bestWinStreak = Math.max(remUser.stats.winStreak, parseInt(remUser.stats.bestWinStreak, 10) || 0);
+      if (!Array.isArray(remUser.friends)) remUser.friends = [];
 
       const locUser = this.data.users[k];
       if (!locUser) {
@@ -479,7 +487,12 @@ window.TavliDB = {
         if (remTime > locTime || remGames > locGames || remSets > locSets) {
           locUser.name = remUser.name;
           locUser.stats = JSON.parse(JSON.stringify(remUser.stats));
+          if (Array.isArray(remUser.friends) && remTime >= locTime) {
+            locUser.friends = Array.from(new Set([...(locUser.friends || []), ...remUser.friends]));
+          }
           locUser.updatedAt = Math.max(remTime, locTime);
+        } else if (Array.isArray(remUser.friends) && remUser.friends.length > 0) {
+          locUser.friends = Array.from(new Set([...(locUser.friends || []), ...remUser.friends]));
         }
       }
     }
@@ -615,8 +628,8 @@ window.TavliDB = {
     if (!key) return { status: "offline", online: false };
     const now = Date.now();
 
-    // Check if the player is actively in a live room first
-    const rooms = this.getLiveRooms();
+    // Check if the player is actively in a live room first (including private rooms)
+    const rooms = this.getAllActiveRooms(true);
     for (const rm of rooms) {
       const isHost = this.normalizeKey(rm.hostName) === key;
       const isGuest = rm.guestName && this.normalizeKey(rm.guestName) === key;
@@ -771,6 +784,8 @@ window.TavliDB = {
       gameMode: String(roomInfo.gameMode || "FULL"),
       targetScore: parseInt(roomInfo.targetScore, 10) || 7,
       turnTimerSec: parseInt(roomInfo.turnTimerSec, 10) || 0,
+      isPrivate: Boolean(roomInfo.isPrivate),
+      spectatorsList: Array.isArray(roomInfo.spectatorsList) ? roomInfo.spectatorsList.slice(0, 30) : [],
       scoreW: parseInt(roomInfo.scoreW, 10) || 0,
       scoreB: parseInt(roomInfo.scoreB, 10) || 0,
       updatedAt: Date.now(),
@@ -824,7 +839,7 @@ window.TavliDB = {
     return rm;
   },
 
-  getLiveRooms() {
+  getAllActiveRooms(includePrivate = true) {
     if (!this.data) this.init();
     if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") return [];
     const now = Date.now();
@@ -834,7 +849,9 @@ window.TavliDB = {
       const pCount = parseInt(rm.playerCount, 10) || 0;
       const sCount = parseInt(rm.spectatorCount, 10) || 0;
       if ((pCount > 0 || sCount > 0) && (now - (rm.updatedAt || 0) <= LIVE_ROOM_TTL_MS)) {
-        active.push(rm);
+        if (includePrivate || !rm.isPrivate) {
+          active.push(rm);
+        }
       } else {
         delete this.data.liveRooms[code];
       }
@@ -846,6 +863,11 @@ window.TavliDB = {
       return (b.updatedAt || 0) - (a.updatedAt || 0);
     });
     return active;
+  },
+
+  getLiveRooms() {
+    // Public Live Games lobby excludes private rooms
+    return this.getAllActiveRooms(false);
   },
 
   normalizeKey(name) {
@@ -885,8 +907,11 @@ window.TavliDB = {
       pinHash: String(pinHash || ""),
       createdAt: Date.now(),
       updatedAt: Date.now(),
+      friends: [],
       stats: {
         elo: DEFAULT_ELO,
+        winStreak: 0,
+        bestWinStreak: 0,
         setsPlayed: 0,
         setsWon: 0,
         setsLost: 0,
@@ -1231,8 +1256,13 @@ window.TavliDB = {
 
     if (didWin) {
       user.stats.setsWon = (user.stats.setsWon || 0) + 1;
+      user.stats.winStreak = (user.stats.winStreak || 0) + 1;
+      if (user.stats.winStreak > (user.stats.bestWinStreak || 0)) {
+        user.stats.bestWinStreak = user.stats.winStreak;
+      }
     } else {
       user.stats.setsLost = (user.stats.setsLost || 0) + 1;
+      user.stats.winStreak = 0;
     }
     user.stats.setsPlayed = (user.stats.setsWon || 0) + (user.stats.setsLost || 0);
 
@@ -1369,12 +1399,116 @@ window.TavliDB = {
     return changed;
   },
 
-  // --- Version 24: Leaderboard Sorted by ELO (All Other Stats Preserved) ---
+  // --- Version 25: Friends List & Win Streak Helpers ---
+  getPlayerWinStreak(playerName) {
+    const u = this.getUser(playerName);
+    if (!u || !u.stats) return 0;
+    return Math.max(0, parseInt(u.stats.winStreak, 10) || 0);
+  },
+
+  getFriendsKeys(myName) {
+    const u = this.getUser(myName);
+    if (u && Array.isArray(u.friends)) {
+      return u.friends.map(k => this.normalizeKey(k)).filter(Boolean);
+    }
+    try {
+      const localRaw = localStorage.getItem("tavli_v25_local_friends");
+      if (localRaw) {
+        const arr = JSON.parse(localRaw);
+        if (Array.isArray(arr)) return arr.map(k => this.normalizeKey(k)).filter(Boolean);
+      }
+    } catch (_) {}
+    return [];
+  },
+
+  isFriend(myName, targetName) {
+    const myKey = this.normalizeKey(myName);
+    const targetKey = this.normalizeKey(targetName);
+    if (!targetKey || myKey === targetKey) return false;
+    return this.getFriendsKeys(myName).includes(targetKey);
+  },
+
+  async addFriendAsync(myName, targetName) {
+    const myKey = this.normalizeKey(myName);
+    const targetKey = this.normalizeKey(targetName);
+    if (!targetKey || myKey === targetKey || this.isAiPlayerName(targetName)) return false;
+
+    const u = this.getUser(myName);
+    if (u) {
+      if (!Array.isArray(u.friends)) u.friends = [];
+      if (!u.friends.includes(targetKey)) {
+        u.friends.push(targetKey);
+        u.updatedAt = Date.now();
+        await this.save();
+      }
+    }
+    try {
+      const localRaw = localStorage.getItem("tavli_v25_local_friends");
+      const arr = localRaw ? JSON.parse(localRaw) : [];
+      if (Array.isArray(arr) && !arr.includes(targetKey)) {
+        arr.push(targetKey);
+        localStorage.setItem("tavli_v25_local_friends", JSON.stringify(arr));
+      }
+    } catch (_) {}
+    return true;
+  },
+
+  async removeFriendAsync(myName, targetName) {
+    const targetKey = this.normalizeKey(targetName);
+    if (!targetKey) return false;
+    const u = this.getUser(myName);
+    if (u && Array.isArray(u.friends)) {
+      u.friends = u.friends.filter(k => this.normalizeKey(k) !== targetKey);
+      u.updatedAt = Date.now();
+      await this.save();
+    }
+    try {
+      const localRaw = localStorage.getItem("tavli_v25_local_friends");
+      const arr = localRaw ? JSON.parse(localRaw) : [];
+      if (Array.isArray(arr)) {
+        const filtered = arr.filter(k => this.normalizeKey(k) !== targetKey);
+        localStorage.setItem("tavli_v25_local_friends", JSON.stringify(filtered));
+      }
+    } catch (_) {}
+    return true;
+  },
+
+  getFriendsDetailedList(myName) {
+    const keys = this.getFriendsKeys(myName);
+    const results = [];
+    keys.forEach(k => {
+      const u = this.getUser(k);
+      const pr = this.data && this.data.presence ? this.data.presence[k] : null;
+      const displayName = u ? u.name : (pr && pr.name ? pr.name : k);
+      const s = (u && u.stats) ? u.stats : {};
+      const elo = typeof s.elo === "number" ? Math.round(s.elo) : DEFAULT_ELO;
+      const winStreak = Math.max(0, parseInt(s.winStreak, 10) || 0);
+      const presence = this.getPlayerPresence(displayName);
+      results.push({
+        key: k,
+        name: displayName,
+        elo,
+        winStreak,
+        presence
+      });
+    });
+    results.sort((a, b) => {
+      const scorePr = p => (!p || !p.online) ? 2 : (p.status === "online_idle" ? 0 : 1);
+      const diff = scorePr(a.presence) - scorePr(b.presence);
+      if (diff !== 0) return diff;
+      return a.name.localeCompare(b.name);
+    });
+    return results;
+  },
+
+  // --- Version 24/25: Leaderboard Sorted by ELO (All Other Stats Preserved) ---
   getLeaderboard() {
     if (!this.data) this.init();
     const list = Object.values(this.data.users).map(u => {
       const s = u.stats || {};
       const elo = typeof s.elo === "number" ? Math.round(s.elo) : this.computeBaselineEloFromStats(s);
+      const winStreak = Math.max(0, parseInt(s.winStreak, 10) || 0);
+      const bestWinStreak = Math.max(winStreak, parseInt(s.bestWinStreak, 10) || 0);
       const setsWon = s.setsWon || 0;
       const setsLost = s.setsLost || 0;
       const setsPlayed = setsWon + setsLost;
@@ -1386,6 +1520,8 @@ window.TavliDB = {
       return {
         name: u.name,
         elo,
+        winStreak,
+        bestWinStreak,
         setsPlayed,
         setsWon,
         setsLost,
@@ -1443,6 +1579,7 @@ window.TavliDB = {
       snapshot[k] = {
         name: u.name,
         pinHash: u.pinHash || null,
+        friends: Array.isArray(u.friends) ? u.friends : [],
         updatedAt: u.updatedAt || 0,
         stats: u.stats
       };
@@ -1473,6 +1610,7 @@ window.TavliDB = {
         this.data.users[k] = {
           name: remUser.name,
           pinHash: remUser.pinHash || null,
+          friends: Array.isArray(remUser.friends) ? remUser.friends : [],
           createdAt: Date.now(),
           updatedAt: remUser.updatedAt || Date.now(),
           stats: remUser.stats

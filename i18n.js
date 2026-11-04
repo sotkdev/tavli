@@ -1,4 +1,4 @@
-// e-Tavli — Bilingual Dictionary, V21–V24 Settings State, Turn Timers, ELO, Presence, Challenges & Global Constants (i18n.js — v24)
+// e-Tavli — Bilingual Dictionary, V21–V24 Settings State, Turn Timers, ELO, Presence, Challenges & Global Constants (i18n.js — v25)
 
 let myLang = "en";
 let myTheme = "classic";
@@ -25,9 +25,12 @@ let myBoardTexture = localStorage.getItem("tavli_v21_board_tex") || "WOOD";     
 let myTapControlMode = localStorage.getItem("tavli_v23_tap_mode") || "SELECT";    // 'SELECT' | 'AUTO_LARGEST'
 let myAutoBearOff = localStorage.getItem("tavli_v23_auto_bearoff") === "ON";      // true | false
 
-// --- Version 24: Host Turn Timer State ---
+// --- Version 24 & 25: Host Turn Timer, Private Room, Spectator Mute & Board Flip State ---
 const ALLOWED_TURN_TIMERS = [0, 30, 60, 120, 300]; // 0 = Unlimited, 30s, 60s, 2m, 5m
 let myTurnTimerPref = parseInt(localStorage.getItem("tavli_v24_turn_timer") || "0", 10) || 0;
+let myPrivateRoomPref = localStorage.getItem("tavli_v25_private_room") === "1";
+let isSpectatorChatMuted = false;
+let isMobileBoardFlipped = false;
 let pendingChallengeTarget = null;
 let activeIncomingChallenge = null;
 
@@ -124,6 +127,36 @@ const I18N = {
     btnDeclineChallenge: "✕ Decline",
     challengeSentWaiting: target => `⚔️ Challenge sent to ${target}! Waiting for response...`,
     challengeDeclinedChat: target => `✕ ${target} declined your game challenge.`,
+    // Version 25: Friends, Streak, Private Room, Share Result, Spectator Mute, Rotate, Room Roster, Alerts
+    btnFriends: "Friends",
+    friendsModalTitle: "👥 Friends List",
+    friendsSearchPh: "Search player name to add as friend...",
+    friendsAddBtn: "+ Add Friend",
+    friendsAddedBtn: "⭐ Friend",
+    friendsRemoveBtn: "✕ Remove",
+    friendsEmpty: "Your Friends list is empty. Search a player above or click '+ Friend' on the Leaderboard or Room Roster!",
+    lblRoomPrivacy: "Room Visibility",
+    optRoomPublic: "🌐 Public (Live Lobby)",
+    optRoomPrivate: "🔒 Private (Code/Invite Only)",
+    btnShareSetResult: "📤 Share Result",
+    shareResultCopied: "✅ Match summary copied to clipboard! Ready to paste in WhatsApp or chat.",
+    oppLeftAfterSetMsg: name => `ℹ️ ${name} left the room. Take your time reviewing the match stats!`,
+    specMuteOn: "🔇 Spec Chat: OFF",
+    specMuteOff: "💬 Spec Chat: ON",
+    specChatMutedNotice: "🔇 Spectator chat is currently muted by the players.",
+    btnRotateBoard: "🔄 Rotate",
+    btnRoomPeople: "👥 Room",
+    roomRosterTitle: "👥 Room Players & Spectators",
+    roomPlayersHdr: "Players in Match",
+    roomSpectatorsHdr: "Spectators Watching",
+    roomNoSpectators: "No spectators watching right now.",
+    tabAlertYourTurn: "🎲 Your Turn! - e-Tavli",
+    tabAlertChallenge: "⚔️ Game Challenge! - e-Tavli",
+    pushYourTurnTitle: "🎲 Your Turn in e-Tavli!",
+    pushYourTurnBody: opp => `It's your turn to play against ${opp}.`,
+    pushChallengeTitle: "⚔️ e-Tavli Match Challenge!",
+    pushChallengeBody: from => `${from} challenged you to a match!`,
+    streakBadgeTitle: n => `Winning Streak: ${n} consecutive sets won`,
     hubBtnHost: "Host a Game Against a Friend",
     hubBtnJoin: "Join Friend's Game",
     hubBtnLiveGames: "Live Games",
@@ -394,6 +427,36 @@ const I18N = {
     btnDeclineChallenge: "✕ Απόρριψη",
     challengeSentWaiting: target => `⚔️ Η πρόκληση στάλθηκε στον/στην ${target}! Αναμονή απάντησης...`,
     challengeDeclinedChat: target => `✕ Ο/Η ${target} απέρριψε την πρόκληση.`,
+    // Version 25: Friends, Streak, Private Room, Share Result, Spectator Mute, Rotate, Room Roster, Alerts (Greek)
+    btnFriends: "Φίλοι",
+    friendsModalTitle: "👥 Λίστα Φίλων",
+    friendsSearchPh: "Αναζήτηση παίκτη για προσθήκη στους φίλους...",
+    friendsAddBtn: "+ Προσθήκη",
+    friendsAddedBtn: "⭐ Φίλος",
+    friendsRemoveBtn: "✕ Αφαίρεση",
+    friendsEmpty: "Η λίστα φίλων είναι κενή. Αναζητήστε παίκτη παραπάνω ή πατήστε '+ Φίλος' στην Κατάταξη ή στο Δωμάτιο!",
+    lblRoomPrivacy: "Ορατότητα Δωματίου",
+    optRoomPublic: "🌐 Δημόσιο (Live Lobby)",
+    optRoomPrivate: "🔒 Ιδιωτικό (Μόνο Κωδικός/Πρόσκληση)",
+    btnShareSetResult: "📤 Κοινοποίηση Αποτελέσματος",
+    shareResultCopied: "✅ Το αποτέλεσμα αντιγράφηκε! Έτοιμο για επικόλληση σε WhatsApp ή chat.",
+    oppLeftAfterSetMsg: name => `ℹ️ Ο/Η ${name} αποχώρησε από το δωμάτιο. Μπορείτε να δείτε τα στατιστικά του σετ με την ησυχία σας!`,
+    specMuteOn: "🔇 Chat Θεατών: ΟΧΙ",
+    specMuteOff: "💬 Chat Θεατών: ΝΑΙ",
+    specChatMutedNotice: "🔇 Το chat των θεατών είναι σε σίγαση.",
+    btnRotateBoard: "🔄 Περιστροφή",
+    btnRoomPeople: "👥 Δωμάτιο",
+    roomRosterTitle: "👥 Παίκτες & Θεατές στο Δωμάτιο",
+    roomPlayersHdr: "Παίκτες στον Αγώνα",
+    roomSpectatorsHdr: "Θεατές που Παρακολουθούν",
+    roomNoSpectators: "Δεν υπάρχουν θεατές αυτή τη στιγμή.",
+    tabAlertYourTurn: "🎲 Σειρά Σας! - e-Tavli",
+    tabAlertChallenge: "⚔️ Πρόκληση! - e-Tavli",
+    pushYourTurnTitle: "🎲 Σειρά σας στο e-Tavli!",
+    pushYourTurnBody: opp => `Είναι η σειρά σας να παίξετε εναντίον του/της ${opp}.`,
+    pushChallengeTitle: "⚔️ Πρόκληση για Παιχνίδι!",
+    pushChallengeBody: from => `Ο/Η ${from} σας προκάλεσε σε αγώνα!`,
+    streakBadgeTitle: n => `Σερί Νικών: ${n} συνεχόμενα κερδισμένα σετ`,
     hubBtnHost: "Δημιουργία Παιχνιδιού με Φίλο",
     hubBtnJoin: "Σύνδεση σε Παιχνίδι Φίλου",
     hubBtnLiveGames: "Ζωντανά Παιχνίδια",

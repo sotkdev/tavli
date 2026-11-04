@@ -278,6 +278,83 @@
     .btn-challenge-inline:hover {
       filter: brightness(1.15);
     }
+    .btn-challenge-sword {
+      padding: 2px 7px;
+      border-radius: 6px;
+      border: 1px solid #ffd54f;
+      background: linear-gradient(135deg, #ffb300, #f57c00);
+      color: #111;
+      font-weight: 900;
+      font-size: 0.72rem;
+      cursor: pointer;
+      margin-left: 6px;
+      vertical-align: middle;
+      line-height: 1.2;
+    }
+    .btn-challenge-sword:hover {
+      filter: brightness(1.15);
+      transform: scale(1.08);
+    }
+    .streak-fire-badge {
+      display: inline-block;
+      background: linear-gradient(135deg, #ff6d00, #dd2c00);
+      color: #fff;
+      font-size: 0.68rem;
+      font-weight: 900;
+      padding: 1px 6px;
+      border-radius: 999px;
+      margin-left: 5px;
+      vertical-align: middle;
+      border: 1px solid #ffd54f;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.45);
+      white-space: nowrap;
+    }
+    .btn-friend-add-sm {
+      padding: 3px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255,255,255,0.28);
+      background: rgba(255,179,0,0.18);
+      color: #ffe082;
+      font-size: 0.7rem;
+      font-weight: 800;
+      cursor: pointer;
+      margin-left: 6px;
+      white-space: nowrap;
+    }
+    .btn-friend-add-sm.is-friend {
+      background: rgba(0,230,118,0.18);
+      color: #00e676;
+      border-color: #00e676;
+    }
+    .btn-friend-add-sm:hover {
+      filter: brightness(1.15);
+    }
+    .roster-item-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: rgba(0,0,0,0.32);
+      border: 1px solid var(--wood-mid);
+      border-radius: 8px;
+      margin-bottom: 6px;
+      flex-wrap: wrap;
+    }
+    .btn-share-result {
+      flex: 1;
+      padding: 11px;
+      border-radius: 8px;
+      border: 1px solid #ffd54f;
+      background: linear-gradient(135deg, #1e88e5, #1565c0);
+      color: #fff;
+      font-weight: 800;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+    .btn-share-result:hover {
+      filter: brightness(1.12);
+    }
 
     /* Version 24: Turn Countdown Pill & 3-Strike Inactivity Banner */
     .turn-timer-pill {
@@ -568,12 +645,12 @@
     }
     .hub-secondary-grid {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(5, 1fr);
       gap: 8px;
       margin-top: 2px;
     }
-    @media (max-width: 480px) {
-      .hub-secondary-grid { grid-template-columns: repeat(2, 1fr); }
+    @media (max-width: 560px) {
+      .hub-secondary-grid { grid-template-columns: repeat(3, 1fr); }
     }
     .hub-btn-sec {
       padding: 10px 6px;
@@ -1425,6 +1502,10 @@
               <span style="font-size:1.25rem;">👤</span>
               <span id="hubBtnProfile">Profile</span>
             </button>
+            <button class="hub-btn-sec" onclick="openFriendsModal()">
+              <span style="font-size:1.25rem;">👥</span>
+              <span id="hubBtnFriends">Friends</span>
+            </button>
             <button class="hub-btn-sec" onclick="openLeaderboardModal()">
               <span style="font-size:1.25rem;">🏆</span>
               <span id="hubBtnLeaderboard">Leaderboard</span>
@@ -1584,6 +1665,15 @@
           <div class="toggle-opt active" id="optAutoRollNo" onclick="selectAutoRollPref(false)">Off (Manual)</div>
           <div class="toggle-opt" id="optAutoRollYes" onclick="selectAutoRollPref(true)">On (Auto-Roll)</div>
         </div>
+
+        <!-- Version 25: Private / Unlisted Room Toggle -->
+        <div id="roomPrivacySection">
+          <label class="sec-label" id="lblRoomPrivacy">Room Visibility</label>
+          <div class="toggle-row">
+            <div class="toggle-opt active" id="optRoomPublic" onclick="selectPrivateRoomPref(false)">🌐 Public (Live Lobby)</div>
+            <div class="toggle-opt" id="optRoomPrivate" onclick="selectPrivateRoomPref(true)">🔒 Private (Code/Invite Only)</div>
+          </div>
+        </div>
       </div>
 
       <div class="modal-btn-row">
@@ -1643,6 +1733,40 @@
       <h2 id="msgModalTitle">💬 Global Player Messages</h2>
       <div id="messagesModalBody"></div>
       <button class="modal-close-btn" id="msgCloseBtn" onclick="closeMessagesModal()">Back / Close</button>
+    </div>
+  </div>
+
+  <!-- 3c. Version 25: Dedicated Friends List Pop-Up Modal -->
+  <div class="modal-overlay" id="friendsModal" style="display:none;">
+    <div class="modal-card wide-modal">
+      <h2 id="friendsModalTitle">👥 Friends List</h2>
+      <div style="display:flex; gap:6px; align-items:center; margin-bottom:10px;">
+        <div class="msg-search-wrap">
+          <input
+            type="text"
+            id="friendsSearchInput"
+            placeholder="Search player name to add as friend..."
+            autocomplete="off"
+            style="width:100%; padding:8px 12px; border-radius:7px; border:1px solid var(--wood-mid); background:#141414; color:#fff; font-size:0.84rem; text-align:left;"
+            oninput="handleFriendsSearchTyping()"
+            onfocus="handleFriendsSearchTyping()"
+            onkeydown="if(event.key==='Enter') addFriendFromTypedInput()"
+          />
+          <div class="msg-autocomplete-list" id="friendsAutocompleteList"></div>
+        </div>
+        <button class="btn-sm" id="friendsAddInputBtn" style="padding:8px 12px;" onclick="addFriendFromTypedInput()">+ Add Friend</button>
+      </div>
+      <div id="friendsListContent" style="max-height:52dvh; overflow-y:auto;"></div>
+      <button class="modal-close-btn" id="friendsCloseBtn" onclick="closeFriendsModal()">Back / Close</button>
+    </div>
+  </div>
+
+  <!-- 3d. Version 25: In-Game Room Players & Spectators Roster Modal -->
+  <div class="modal-overlay" id="roomRosterModal" style="display:none;">
+    <div class="modal-card wide-modal" style="max-width:500px;">
+      <h2 id="roomRosterTitle">👥 Room Players &amp; Spectators</h2>
+      <div id="roomRosterContent" style="max-height:58dvh; overflow-y:auto;"></div>
+      <button class="modal-close-btn" id="roomRosterCloseBtn" onclick="closeRoomRosterModal()">Back / Close</button>
     </div>
   </div>
 
@@ -1801,10 +1925,13 @@
       <div class="net-bar" id="netBar">
         <div style="display:flex; align-items:center; flex-wrap:wrap;">
           <span id="netStatus">Room Active</span>
-          <span class="spectator-pill" id="spectatorCountBadge">👁️ 0</span>
+          <span class="spectator-pill" id="spectatorCountBadge" style="cursor:pointer;" onclick="openRoomRosterModal()" title="View Players & Spectators">👁️ 0</span>
           <span class="countdown-pill" id="disconnectCountdown" style="display:none;">05:00</span>
         </div>
         <div class="net-controls">
+          <button class="btn-sm" id="roomPeopleBtn" style="background:#00897b; color:#fff;" onclick="openRoomRosterModal()">👥 Room</button>
+          <button class="btn-sm" id="specChatMuteBtn" style="background:#546e7a; color:#fff; display:none;" onclick="toggleSpectatorChatMute()">💬 Spec Chat: ON</button>
+          <button class="btn-sm" id="rotateBoardBtn" style="background:#5c6bc0; color:#fff;" onclick="toggleMobileBoardRotation()">🔄 Rotate</button>
           <button class="btn-sm btn-share" id="shareBtn" onclick="shareInviteLink(activeRoomCode)">Share Invite</button>
           <button class="btn-sm btn-mute" id="muteBtn" onclick="toggleSound()">Sound: ON</button>
           <button class="btn-sm" style="background:#e53935; color:#fff;" id="menuReturnBtn" onclick="handleReturnToMainMenuKeepGame()">🏠 Menu</button>
@@ -1842,7 +1969,7 @@
       <!-- Match Scoreboard with Real-Time Pip Counters & Turn Countdown -->
       <div class="hud">
         <div class="score-box">
-          <span id="colorLabelW">White</span> (<span id="nameW">Player 1</span>)<br>
+          <span id="colorLabelW">White</span> (<span id="nameW">Player 1</span>)<span id="streakBadgeW"></span><br>
           <span class="score-num" id="scoreW">0</span> / <span id="targetW">7</span><br>
           <span class="pip-counter-badge" id="pipCountW">167 pips</span>
         </div>
@@ -1852,7 +1979,7 @@
           <div class="turn-timer-pill" id="turnTimerBadge">⏱️ 00:30</div>
         </div>
         <div class="score-box">
-          <span id="colorLabelB">Black</span> (<span id="nameB">Player 2</span>)<br>
+          <span id="colorLabelB">Black</span> (<span id="nameB">Player 2</span>)<span id="streakBadgeB"></span><br>
           <span class="score-num" id="scoreB">0</span> / <span id="targetB">7</span><br>
           <span class="pip-counter-badge" id="pipCountB">167 pips</span>
         </div>
@@ -1902,6 +2029,7 @@
     <div class="side-column" id="sideColumn">
       <div class="side-top-btns">
         <button id="btnOpenProfile" onclick="openProfileModal()">👤 <span id="lblBtnProfile">Profile</span></button>
+        <button id="btnOpenFriends" onclick="openFriendsModal()">👥 <span id="lblBtnFriends">Friends</span></button>
         <button id="btnOpenLeaderboard" onclick="openLeaderboardModal()">🏆 <span id="lblBtnLeaderboard">Leaderboard</span></button>
         <button id="btnOpenMessages" onclick="openMessagesModal()">💬 <span id="lblBtnMessages">Messages</span> <span class="unread-badge" id="unreadBadgeGame">0</span></button>
         <button id="btnOpenSettings" onclick="openSettingsModal()">⚙️ <span id="lblBtnSettings">Settings</span></button>
@@ -1930,7 +2058,7 @@
   </div>
 
   <!-- Small Version Label at Bottom-Right -->
-  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v24</div>
+  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v25</div>
 
   <script src="i18n.js"></script>
   <script src="tutorial.js"></script>
