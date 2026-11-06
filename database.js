@@ -1,4 +1,4 @@
-// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, ELO Rating, Online Presence, Direct Challenges, Live Rooms & Global Messaging (database.js — v25)
+// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, ELO Rating, Online Presence, Direct Challenges, Live Rooms & Global Messaging (database.js — v26)
 // Always points to: https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json
 
 const TAVLI_DB_STORAGE_KEY = "tavli_players_database_v1";
@@ -12,11 +12,22 @@ const DEFAULT_ELO          = 1200;
 // PERMANENT FIREBASE REALTIME DATABASE ENDPOINT:
 const DEFAULT_CLOUD_ENDPOINT = "https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json";
 
+const ACHIEVEMENT_CATALOG = [
+  { id: "MANA_HUNTER", icon: "🪤", nameKey: "badge_mana_hunter_name", descKey: "badge_mana_hunter_desc" },
+  { id: "COMEBACK_KING", icon: "👑", nameKey: "badge_comeback_king_name", descKey: "badge_comeback_king_desc" },
+  { id: "DIPLOMAT", icon: "🏛️", nameKey: "badge_diplomat_name", descKey: "badge_diplomat_desc" },
+  { id: "FIRST_BLOOD", icon: "🥇", nameKey: "badge_first_blood_name", descKey: "badge_first_blood_desc" },
+  { id: "HOT_STREAK", icon: "🔥", nameKey: "badge_hot_streak_name", descKey: "badge_hot_streak_desc" },
+  { id: "GRANDMASTER", icon: "⚡", nameKey: "badge_grandmaster_name", descKey: "badge_grandmaster_desc" }
+];
+
 const INITIAL_TAVLI_DATABASE = {
-  version: 6,
+  version: 7,
   lastUpdated: Date.now(),
   users: {},
   messages: [],
+  lobbyChat: [],
+  broadcastBanner: { text: "", updatedAt: 0, author: "Sotiris" },
   liveRooms: {},
   presence: {},
   challenges: {},
@@ -51,6 +62,10 @@ window.TavliDB = {
           this.data = JSON.parse(JSON.stringify(INITIAL_TAVLI_DATABASE));
         }
         if (!Array.isArray(this.data.messages)) this.data.messages = [];
+        if (!Array.isArray(this.data.lobbyChat)) this.data.lobbyChat = [];
+        if (!this.data.broadcastBanner || typeof this.data.broadcastBanner !== "object") {
+          this.data.broadcastBanner = { text: "", updatedAt: 0, author: "Sotiris" };
+        }
         if (!this.data.liveRooms || typeof this.data.liveRooms !== "object") this.data.liveRooms = {};
         if (!this.data.presence || typeof this.data.presence !== "object") this.data.presence = {};
         if (!this.data.challenges || typeof this.data.challenges !== "object") this.data.challenges = {};
@@ -141,6 +156,23 @@ window.TavliDB = {
       }
       s.winStreak = Math.max(0, parseInt(s.winStreak, 10) || 0);
       s.bestWinStreak = Math.max(s.winStreak, parseInt(s.bestWinStreak, 10) || 0);
+      if (!s.badges || typeof s.badges !== "object" || Array.isArray(s.badges)) {
+        s.badges = {};
+      }
+      if (!Array.isArray(s.recentSets)) {
+        s.recentSets = [];
+      } else if (s.recentSets.length > 10) {
+        s.recentSets = s.recentSets.slice(-10);
+      }
+      if (!Array.isArray(s.eloHistory) || s.eloHistory.length === 0) {
+        s.eloHistory = [s.elo];
+      } else if (s.eloHistory.length > 15) {
+        s.eloHistory = s.eloHistory.slice(-15);
+      }
+      // Retroactively award milestone badges if criteria already met
+      if (s.setsWon >= 1 && !s.badges.FIRST_BLOOD) s.badges.FIRST_BLOOD = u.updatedAt || Date.now();
+      if (s.bestWinStreak >= 3 && !s.badges.HOT_STREAK) s.badges.HOT_STREAK = u.updatedAt || Date.now();
+      if (s.elo >= 1350 && !s.badges.GRANDMASTER) s.badges.GRANDMASTER = u.updatedAt || Date.now();
       if (!Array.isArray(u.friends)) {
         u.friends = [];
       }
@@ -352,6 +384,48 @@ window.TavliDB = {
     this.data.messages = merged.slice(-400);
   },
 
+  mergeLobbyChatList(remoteLobby) {
+    if (!Array.isArray(remoteLobby)) return;
+    if (!this.data) this.init();
+    if (!Array.isArray(this.data.lobbyChat)) this.data.lobbyChat = [];
+
+    const byId = new Map();
+    this.data.lobbyChat.forEach(m => {
+      if (m && m.id) byId.set(m.id, m);
+    });
+    remoteLobby.forEach(rm => {
+      if (!rm || !rm.id || !rm.sender || !rm.text) return;
+      if (!byId.has(rm.id)) {
+        byId.set(rm.id, {
+          id: String(rm.id),
+          sender: String(rm.sender).slice(0, 16),
+          senderKey: this.normalizeKey(rm.senderKey || rm.sender),
+          text: String(rm.text).slice(0, 220),
+          ts: Number(rm.ts) || Date.now()
+        });
+      }
+    });
+    const merged = Array.from(byId.values()).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    this.data.lobbyChat = merged.slice(-80);
+  },
+
+  mergeBroadcastBanner(remoteBanner) {
+    if (!remoteBanner || typeof remoteBanner !== "object") return;
+    if (!this.data) this.init();
+    if (!this.data.broadcastBanner || typeof this.data.broadcastBanner !== "object") {
+      this.data.broadcastBanner = { text: "", updatedAt: 0, author: "Sotiris" };
+    }
+    const remTs = Number(remoteBanner.updatedAt) || 0;
+    const locTs = Number(this.data.broadcastBanner.updatedAt) || 0;
+    if (remTs >= locTs) {
+      this.data.broadcastBanner = {
+        text: String(remoteBanner.text || "").trim().slice(0, 240),
+        updatedAt: remTs,
+        author: String(remoteBanner.author || "Sotiris")
+      };
+    }
+  },
+
   mergeLiveRoomsMap(remoteRooms) {
     if (!remoteRooms || typeof remoteRooms !== "object") return;
     if (!this.data) this.init();
@@ -484,21 +558,37 @@ window.TavliDB = {
 
         function localUserStatsCheck(u) { return u.stats || {}; }
 
+        const mergedBadges = Object.assign(
+          {},
+          (locUser.stats && locUser.stats.badges) || {},
+          (remUser.stats && remUser.stats.badges) || {}
+        );
         if (remTime > locTime || remGames > locGames || remSets > locSets) {
           locUser.name = remUser.name;
           locUser.stats = JSON.parse(JSON.stringify(remUser.stats));
+          locUser.stats.badges = mergedBadges;
           if (Array.isArray(remUser.friends) && remTime >= locTime) {
             locUser.friends = Array.from(new Set([...(locUser.friends || []), ...remUser.friends]));
           }
           locUser.updatedAt = Math.max(remTime, locTime);
-        } else if (Array.isArray(remUser.friends) && remUser.friends.length > 0) {
-          locUser.friends = Array.from(new Set([...(locUser.friends || []), ...remUser.friends]));
+        } else {
+          if (!locUser.stats.badges) locUser.stats.badges = {};
+          Object.assign(locUser.stats.badges, mergedBadges);
+          if (Array.isArray(remUser.friends) && remUser.friends.length > 0) {
+            locUser.friends = Array.from(new Set([...(locUser.friends || []), ...remUser.friends]));
+          }
         }
       }
     }
 
     if (Array.isArray(remoteDB.messages)) {
       this.mergeMessagesList(remoteDB.messages);
+    }
+    if (Array.isArray(remoteDB.lobbyChat)) {
+      this.mergeLobbyChatList(remoteDB.lobbyChat);
+    }
+    if (remoteDB.broadcastBanner && typeof remoteDB.broadcastBanner === "object") {
+      this.mergeBroadcastBanner(remoteDB.broadcastBanner);
     }
 
     if (remoteDB.liveRooms && typeof remoteDB.liveRooms === "object") {
@@ -910,6 +1000,9 @@ window.TavliDB = {
       friends: [],
       stats: {
         elo: DEFAULT_ELO,
+        eloHistory: [DEFAULT_ELO],
+        recentSets: [],
+        badges: {},
         winStreak: 0,
         bestWinStreak: 0,
         setsPlayed: 0,
@@ -1160,10 +1253,34 @@ window.TavliDB = {
     return user.stats.opponents[oppKey];
   },
 
+  unlockAchievementBadge(playerName, badgeId) {
+    const u = this.getUser(playerName);
+    if (!u || !u.stats || !badgeId) return false;
+    if (!u.stats.badges || typeof u.stats.badges !== "object" || Array.isArray(u.stats.badges)) {
+      u.stats.badges = {};
+    }
+    if (!u.stats.badges[badgeId]) {
+      u.stats.badges[badgeId] = Date.now();
+      u.updatedAt = Date.now();
+      return true;
+    }
+    return false;
+  },
+
+  getPlayerBadgesList(playerName) {
+    const u = this.getUser(playerName);
+    const unlockedMap = (u && u.stats && u.stats.badges && typeof u.stats.badges === "object") ? u.stats.badges : {};
+    return ACHIEVEMENT_CATALOG.map(b => ({
+      ...b,
+      unlocked: Boolean(unlockedMap[b.id]),
+      unlockedAt: unlockedMap[b.id] || null
+    }));
+  },
+
   _applyEloUpdateBetweenPlayers(wName, bName, wWon, kFactor = 16) {
     const uW = this.getUser(wName);
     const uB = this.getUser(bName);
-    if (!uW && !uB) return;
+    if (!uW && !uB) return { deltaW: 0, deltaB: 0, newEloW: DEFAULT_ELO, newEloB: DEFAULT_ELO };
 
     const eloW = (uW && uW.stats && typeof uW.stats.elo === "number") ? uW.stats.elo : DEFAULT_ELO;
     const eloB = (uB && uB.stats && typeof uB.stats.elo === "number") ? uB.stats.elo : DEFAULT_ELO;
@@ -1174,13 +1291,119 @@ window.TavliDB = {
     const actualW = wWon ? 1 : 0;
     const actualB = wWon ? 0 : 1;
 
+    let newEloW = eloW;
+    let newEloB = eloB;
+
     if (uW && uW.stats) {
-      uW.stats.elo = Math.max(800, Math.round(eloW + kFactor * (actualW - expectedW)));
+      newEloW = Math.max(800, Math.round(eloW + kFactor * (actualW - expectedW)));
+      uW.stats.elo = newEloW;
+      if (newEloW >= 1350) this.unlockAchievementBadge(wName, "GRANDMASTER");
       uW.updatedAt = Date.now();
     }
     if (uB && uB.stats) {
-      uB.stats.elo = Math.max(800, Math.round(eloB + kFactor * (actualB - expectedB)));
+      newEloB = Math.max(800, Math.round(eloB + kFactor * (actualB - expectedB)));
+      uB.stats.elo = newEloB;
+      if (newEloB >= 1350) this.unlockAchievementBadge(bName, "GRANDMASTER");
       uB.updatedAt = Date.now();
+    }
+    return {
+      deltaW: newEloW - eloW,
+      deltaB: newEloB - eloB,
+      newEloW,
+      newEloB
+    };
+  },
+
+  _recordCompletedSetHistoryAndBadges(winEv, totalEloDeltaW, totalEloDeltaB) {
+    const wName = String(winEv.nameW || "Player 1").trim();
+    const bName = String(winEv.nameB || "Player 2").trim();
+    const wWon = winEv.winner === "W";
+    const winnerName = wWon ? wName : bName;
+    const scoreW = parseInt(winEv.scoreW, 10) || 0;
+    const scoreB = parseInt(winEv.scoreB, 10) || 0;
+    const targetScore = parseInt(winEv.targetScore, 10) || 7;
+    const ts = Date.now();
+
+    // 1. Check Set-Level Achievements (Comeback King, Diplomat, First Blood, Hot Streak)
+    this.unlockAchievementBadge(winnerName, "FIRST_BLOOD");
+    const winUser = this.getUser(winnerName);
+    if (winUser && winUser.stats && (winUser.stats.winStreak || 0) >= 3) {
+      this.unlockAchievementBadge(winnerName, "HOT_STREAK");
+    }
+    if (winEv.comebackKing) {
+      this.unlockAchievementBadge(winnerName, "COMEBACK_KING");
+    }
+    if (winEv.diplomatCount && winEv.diplomatCount >= 3) {
+      this.unlockAchievementBadge(winnerName, "DIPLOMAT");
+    }
+    // Also evaluate from gamesLog if attached
+    if (Array.isArray(winEv.gamesLog) && winEv.gamesLog.length > 0) {
+      const winnerRole = wWon ? "W" : "B";
+      const diplosWon = winEv.gamesLog.filter(g => g && g.winner === winnerRole && g.pts === 2 && !g.forfeit).length;
+      if (diplosWon >= 3) {
+        this.unlockAchievementBadge(winnerName, "DIPLOMAT");
+      }
+      if (targetScore >= 7) {
+        let runW = 0, runB = 0, trailed0to5 = false;
+        for (const g of winEv.gamesLog) {
+          if (!g) continue;
+          const p = parseInt(g.pts, 10) || 1;
+          if (g.winner === "W") runW += p; else runB += p;
+          const mySc = winnerRole === "W" ? runW : runB;
+          const oppSc = winnerRole === "W" ? runB : runW;
+          if (mySc === 0 && oppSc >= 5) trailed0to5 = true;
+        }
+        if (trailed0to5) {
+          this.unlockAchievementBadge(winnerName, "COMEBACK_KING");
+        }
+      }
+    }
+
+    // 2. Append to each player's Last 10 Completed Sets & ELO Sparkline History
+    const uW = this.getUser(wName);
+    if (uW && uW.stats) {
+      if (!Array.isArray(uW.stats.recentSets)) uW.stats.recentSets = [];
+      if (!Array.isArray(uW.stats.eloHistory) || uW.stats.eloHistory.length === 0) {
+        uW.stats.eloHistory = [Math.max(800, (uW.stats.elo || DEFAULT_ELO) - totalEloDeltaW)];
+      }
+      uW.stats.eloHistory.push(uW.stats.elo || DEFAULT_ELO);
+      if (uW.stats.eloHistory.length > 15) uW.stats.eloHistory = uW.stats.eloHistory.slice(-15);
+
+      uW.stats.recentSets.push({
+        id: String(winEv.id),
+        opponent: bName,
+        myScore: scoreW,
+        oppScore: scoreB,
+        target: targetScore,
+        won: wWon,
+        eloDelta: totalEloDeltaW,
+        eloAfter: uW.stats.elo || DEFAULT_ELO,
+        ts
+      });
+      if (uW.stats.recentSets.length > 10) uW.stats.recentSets = uW.stats.recentSets.slice(-10);
+    }
+
+    const uB = this.getUser(bName);
+    if (uB && uB.stats) {
+      if (!Array.isArray(uB.stats.recentSets)) uB.stats.recentSets = [];
+      if (!Array.isArray(uB.stats.eloHistory) || uB.stats.eloHistory.length === 0) {
+        uB.stats.eloHistory = [Math.max(800, (uB.stats.elo || DEFAULT_ELO) - totalEloDeltaB)];
+      }
+      uB.stats.eloHistory.push(uB.stats.elo || DEFAULT_ELO);
+      if (uB.stats.eloHistory.length > 15) uB.stats.eloHistory = uB.stats.eloHistory.slice(-15);
+
+      uB.stats.recentSets.push({
+        id: String(winEv.id),
+        opponent: wName,
+        myScore: scoreB,
+        oppScore: scoreW,
+        target: targetScore,
+        won: !wWon,
+        eloDelta: totalEloDeltaB,
+        eloAfter: uB.stats.elo || DEFAULT_ELO,
+        ts
+      });
+      if (uB.stats.recentSets.length > 10) uB.stats.recentSets = uB.stats.recentSets.slice(-10);
     }
   },
 
@@ -1201,18 +1424,32 @@ window.TavliDB = {
     this.data.processedWinEvents[evId] = Date.now();
 
     const wWon = winEv.winner === "W";
+    const winnerName = wWon ? wName : bName;
     const variant = winEv.variant || "PORTES";
+
+    // Check Mana Hunter badge (winning Plakoto by pinning opponent's Mother checker)
+    if (winEv.manaWin && variant === "PLAKOTO") {
+      this.unlockAchievementBadge(winnerName, "MANA_HUNTER");
+    }
+
+    let totalDeltaW = 0;
+    let totalDeltaB = 0;
 
     if (!winEv.forfeitSetOnly) {
       this._applySingleGameIncrement(wName, bName, variant, wWon);
       this._applySingleGameIncrement(bName, wName, variant, !wWon);
-      this._applyEloUpdateBetweenPlayers(wName, bName, wWon, 14);
+      const gElo = this._applyEloUpdateBetweenPlayers(wName, bName, wWon, 14);
+      totalDeltaW += gElo.deltaW;
+      totalDeltaB += gElo.deltaB;
     }
 
     if (winEv.matchOver) {
       this._applySingleSetIncrement(wName, bName, wWon);
       this._applySingleSetIncrement(bName, wName, !wWon);
-      this._applyEloUpdateBetweenPlayers(wName, bName, wWon, 24);
+      const sElo = this._applyEloUpdateBetweenPlayers(wName, bName, wWon, 24);
+      totalDeltaW += sElo.deltaW;
+      totalDeltaB += sElo.deltaB;
+      this._recordCompletedSetHistoryAndBadges(winEv, totalDeltaW, totalDeltaB);
     }
 
     this.save();
@@ -1501,6 +1738,76 @@ window.TavliDB = {
     return results;
   },
 
+  // --- Version 26: Admin Broadcast Banner (Sotiris Only) & Global Kafeneio Lobby Chat ---
+  getBroadcastBanner() {
+    if (!this.data) this.init();
+    const b = this.data.broadcastBanner;
+    if (!b || !b.text || !String(b.text).trim()) return null;
+    return {
+      text: String(b.text).trim(),
+      updatedAt: Number(b.updatedAt) || 0,
+      author: String(b.author || "Sotiris")
+    };
+  },
+
+  async setBroadcastBannerAsync(adminName, rawText) {
+    if (!this.isAdminName(adminName)) {
+      return { ok: false, message: "Only Sotiris can update the Broadcast Banner." };
+    }
+    if (!this.data) this.init();
+    const cleanText = String(rawText || "").trim().slice(0, 240);
+    const bannerObj = {
+      text: cleanText,
+      updatedAt: Date.now(),
+      author: "Sotiris"
+    };
+    this.data.broadcastBanner = bannerObj;
+    this.saveLocalOnly();
+
+    const subUrl = this.getSubPathUrl("broadcastBanner");
+    if (subUrl) {
+      try {
+        await fetch(subUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(bannerObj)
+        });
+      } catch (_) {}
+    }
+    await this.save();
+    this.notifyListeners();
+    return { ok: true, banner: bannerObj };
+  },
+
+  getLobbyChatMessages() {
+    if (!this.data) this.init();
+    if (!Array.isArray(this.data.lobbyChat)) this.data.lobbyChat = [];
+    return this.data.lobbyChat.slice(-60).sort((a, b) => (a.ts || 0) - (b.ts || 0));
+  },
+
+  async sendLobbyChatMessageAsync(senderName, rawText) {
+    if (!this.data) this.init();
+    if (!Array.isArray(this.data.lobbyChat)) this.data.lobbyChat = [];
+    const cleanSender = String(senderName || "Player").trim().slice(0, 16) || "Player";
+    const cleanText = String(rawText || "").trim().slice(0, 220);
+    if (!cleanText) return { ok: false };
+
+    const msgObj = {
+      id: "KAF-" + Date.now() + "-" + Math.floor(Math.random() * 100000),
+      sender: cleanSender,
+      senderKey: this.normalizeKey(cleanSender),
+      text: cleanText,
+      ts: Date.now()
+    };
+    this.data.lobbyChat.push(msgObj);
+    if (this.data.lobbyChat.length > 80) {
+      this.data.lobbyChat = this.data.lobbyChat.slice(-80);
+    }
+    this.saveLocalOnly();
+    await this.save();
+    return { ok: true, msg: msgObj };
+  },
+
   // --- Version 24/25: Leaderboard Sorted by ELO (All Other Stats Preserved) ---
   getLeaderboard() {
     if (!this.data) this.init();
@@ -1587,6 +1894,8 @@ window.TavliDB = {
     return {
       users: snapshot,
       messages: Array.isArray(this.data.messages) ? this.data.messages.slice(-200) : [],
+      lobbyChat: Array.isArray(this.data.lobbyChat) ? this.data.lobbyChat.slice(-60) : [],
+      broadcastBanner: this.data.broadcastBanner || { text: "", updatedAt: 0, author: "Sotiris" },
       liveRooms: this.data.liveRooms || {},
       presence: this.data.presence || {},
       challenges: this.data.challenges || {},
@@ -1639,6 +1948,16 @@ window.TavliDB = {
       const beforeLen = (this.data.messages || []).length;
       this.mergeMessagesList(remoteSnapshot.messages);
       if ((this.data.messages || []).length !== beforeLen) changed = true;
+    }
+    if (Array.isArray(remoteSnapshot.lobbyChat)) {
+      const beforeLobby = (this.data.lobbyChat || []).length;
+      this.mergeLobbyChatList(remoteSnapshot.lobbyChat);
+      if ((this.data.lobbyChat || []).length !== beforeLobby) changed = true;
+    }
+    if (remoteSnapshot.broadcastBanner && typeof remoteSnapshot.broadcastBanner === "object") {
+      const oldTs = (this.data.broadcastBanner && this.data.broadcastBanner.updatedAt) || 0;
+      this.mergeBroadcastBanner(remoteSnapshot.broadcastBanner);
+      if (((this.data.broadcastBanner && this.data.broadcastBanner.updatedAt) || 0) !== oldTs) changed = true;
     }
 
     if (remoteSnapshot.liveRooms && typeof remoteSnapshot.liveRooms === "object") {

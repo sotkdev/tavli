@@ -240,6 +240,232 @@
       filter: brightness(1.12);
     }
 
+        /* Version 26: Admin Broadcast Banner, Achievement Badges, ELO Sparkline, Kafeneio Chat & Mobile Horizontal Layout */
+    .admin-broadcast-banner {
+      background: linear-gradient(135deg, rgba(255, 179, 0, 0.24), rgba(245, 124, 0, 0.18));
+      border: 2px solid var(--accent);
+      border-radius: 12px;
+      padding: 10px 14px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+    }
+    .admin-broadcast-text {
+      font-size: 0.88rem;
+      font-weight: 800;
+      color: #fff8e1;
+      line-height: 1.35;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      word-break: break-word;
+    }
+    .trophy-badges-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin: 8px 0 12px;
+    }
+    @media (max-width: 560px) {
+      .trophy-badges-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+    .trophy-badge-card {
+      background: rgba(0,0,0,0.35);
+      border: 1px solid var(--wood-mid);
+      border-radius: 9px;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      transition: transform 0.14s ease, border-color 0.14s ease;
+    }
+    .trophy-badge-card.unlocked {
+      background: linear-gradient(135deg, rgba(255, 179, 0, 0.2), rgba(0, 230, 118, 0.1));
+      border-color: var(--accent);
+      box-shadow: 0 3px 10px rgba(0,0,0,0.45);
+    }
+    .trophy-badge-card.locked {
+      opacity: 0.42;
+      filter: grayscale(0.85);
+    }
+    .trophy-badge-icon {
+      font-size: 1.45rem;
+      flex-shrink: 0;
+    }
+    .trophy-badge-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      text-align: left;
+    }
+    .trophy-badge-title {
+      font-size: 0.75rem;
+      font-weight: 900;
+      color: var(--accent);
+    }
+    .trophy-badge-desc {
+      font-size: 0.65rem;
+      color: #cfd8dc;
+      line-height: 1.25;
+    }
+    .elo-sparkline-box {
+      background: rgba(0,0,0,0.32);
+      border: 1px solid var(--wood-mid);
+      border-radius: 9px;
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .lobby-tabs-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .lobby-tab-btn {
+      flex: 1;
+      padding: 9px 12px;
+      border-radius: 9px;
+      border: 2px solid var(--wood-mid);
+      background: rgba(0,0,0,0.32);
+      color: #d7ccc8;
+      font-weight: 800;
+      font-size: 0.84rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .lobby-tab-btn.active {
+      border-color: var(--accent);
+      background: rgba(255, 179, 0, 0.18);
+      color: #fff;
+    }
+    .kafeneio-chat-wrap {
+      background: rgba(0,0,0,0.34);
+      border: 1px solid var(--wood-mid);
+      border-radius: 10px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      height: 50dvh;
+      max-height: 410px;
+    }
+    .kafeneio-messages-box {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 6px;
+      background: rgba(0,0,0,0.25);
+      border-radius: 8px;
+      user-select: text;
+    }
+    .kafeneio-msg-row {
+      padding: 6px 9px;
+      border-radius: 7px;
+      background: rgba(255,255,255,0.05);
+      font-size: 0.8rem;
+      line-height: 1.35;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    /* Version 26: Horizontal Mobile Layout Mode (Side-by-Side Board & Controls/Chat on Mobile) */
+    body.mobile-horizontal-mode {
+      overflow: hidden !important;
+    }
+    body.mobile-horizontal-mode .app-layout.active-game {
+      height: 100dvh !important;
+      max-height: 100dvh !important;
+      min-height: 0 !important;
+      display: grid !important;
+      grid-template-columns: minmax(0, 1.38fr) minmax(210px, 0.82fr) !important;
+      align-items: stretch !important;
+      gap: 8px !important;
+      padding: 4px 8px !important;
+      overflow: hidden !important;
+    }
+    body.mobile-horizontal-mode .left-spacer {
+      display: none !important;
+    }
+    body.mobile-horizontal-mode .main-column {
+      width: 100% !important;
+      height: 100% !important;
+      max-height: calc(100dvh - 8px) !important;
+      justify-content: space-between !important;
+      overflow: hidden !important;
+    }
+    body.mobile-horizontal-mode .net-bar {
+      padding: 3px 7px !important;
+      margin-bottom: 3px !important;
+      font-size: 0.68rem !important;
+    }
+    body.mobile-horizontal-mode .hud {
+      padding: 3px 8px !important;
+      margin-bottom: 3px !important;
+    }
+    body.mobile-horizontal-mode .score-box {
+      font-size: 0.68rem !important;
+    }
+    body.mobile-horizontal-mode .score-box .score-num {
+      font-size: 0.96rem !important;
+    }
+    body.mobile-horizontal-mode .board-wrap {
+      width: auto !important;
+      height: calc(100dvh - 118px) !important;
+      max-width: 100% !important;
+      aspect-ratio: 4 / 3 !important;
+      margin: 0 auto !important;
+      padding: 4px !important;
+      gap: 4px !important;
+    }
+    body.mobile-horizontal-mode .controls {
+      margin-top: 3px !important;
+      gap: 4px !important;
+    }
+    body.mobile-horizontal-mode .btn-action {
+      padding: 5px 10px !important;
+      font-size: 0.74rem !important;
+    }
+    body.mobile-horizontal-mode .side-column {
+      width: 100% !important;
+      height: calc(100dvh - 8px) !important;
+      max-height: calc(100dvh - 8px) !important;
+      min-height: 0 !important;
+      display: flex !important;
+      flex-direction: column !important;
+      gap: 5px !important;
+      overflow: hidden !important;
+    }
+    body.mobile-horizontal-mode .side-top-btns button {
+      padding: 5px 3px !important;
+      font-size: 0.64rem !important;
+    }
+    body.mobile-horizontal-mode .chat-box {
+      flex: 1 1 0 !important;
+      height: 0 !important;
+      max-height: 100% !important;
+      padding: 6px !important;
+    }
+    body.mobile-horizontal-mode .chat-messages {
+      flex: 1 1 0 !important;
+      height: 0 !important;
+      max-height: none !important;
+      font-size: 0.74rem !important;
+    }
+
     /* Version 24: Online Presence Dots & Challenge Button */
     .presence-dot {
       display: inline-block;
@@ -1431,6 +1657,15 @@
         <div class="landing-subtitle" id="landingSubTitle">Portes • Plakoto • Fevga — Authentic Greek Backgammon</div>
       </div>
 
+      <!-- Version 26: Sotiris Admin Pinned Broadcast Banner -->
+      <div class="admin-broadcast-banner" id="adminBroadcastBanner">
+        <div class="admin-broadcast-text">
+          <span style="font-size:1.15rem;">📢</span>
+          <span id="adminBroadcastText"></span>
+        </div>
+        <button class="btn-sm" id="btnEditBroadcastInline" style="display:none; background:rgba(0,0,0,0.45); color:#ffe082; border:1px solid var(--accent);" onclick="openAdminModal()">✏️ Edit</button>
+      </div>
+
       <!-- Version 24: Top Active Game Resume / Resign / End Banner -->
       <div class="active-game-resume-banner" id="activeGameResumeBanner">
         <div class="active-game-resume-info">
@@ -1695,15 +1930,48 @@
     </div>
   </div>
 
-  <!-- 1b. Live Games Lobby Pop-Up Modal -->
+  <!-- 1b. Live Games & Global Kafeneio Lobby Chat Pop-Up Modal (Version 26) -->
   <div class="modal-overlay" id="liveGamesModal" style="display:none;">
     <div class="modal-card wide-modal">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <h2 id="liveModalTitle" style="margin-bottom:0;">🟢 Live Games Lobby</h2>
         <button class="btn-sm" id="liveRefreshBtn" onclick="refreshLiveGamesLobby()">🔄 Refresh</button>
       </div>
-      <div id="liveSyncStatus" style="font-size:0.74rem; color:#81c784; text-align:center; margin-bottom:8px;">🌐 Live Rooms — Join 1-player rooms or Spectate 2-player matches</div>
-      <div class="live-games-list" id="liveGamesListContainer"></div>
+
+      <div class="lobby-tabs-row">
+        <button type="button" class="lobby-tab-btn active" id="btnLiveTabRooms" onclick="switchLiveLobbyTab('ROOMS')">
+          <span id="lblLiveTabRooms">🎲 Live Rooms</span>
+        </button>
+        <button type="button" class="lobby-tab-btn" id="btnLiveTabKafeneio" onclick="switchLiveLobbyTab('KAFENEIO')">
+          <span id="lblLiveTabKafeneio">☕ Kafeneio Lobby Chat</span>
+        </button>
+      </div>
+
+      <!-- Tab 1: Active Live Rooms -->
+      <div id="liveRoomsTabPane">
+        <div id="liveSyncStatus" style="font-size:0.74rem; color:#81c784; text-align:center; margin-bottom:8px;">🌐 Live Rooms — Join 1-player rooms or Spectate 2-player matches</div>
+        <div class="live-games-list" id="liveGamesListContainer"></div>
+      </div>
+
+      <!-- Tab 2: Global Kafeneio Lobby Chat -->
+      <div id="kafeneioChatTabPane" style="display:none;">
+        <div id="kafeneioHeaderNote" style="font-size:0.75rem; color:#ffecb3; text-align:center; margin-bottom:6px;">
+          ☕ Welcome to the Kafeneio! Chat with online players, arrange sets, or post open challenges.
+        </div>
+        <div class="kafeneio-chat-wrap">
+          <div class="kafeneio-messages-box" id="kafeneioMessagesBox"></div>
+          <div class="chat-input-row">
+            <div class="emoji-picker-wrap">
+              <button type="button" class="btn-emoji-toggle" onclick="toggleEmojiPicker('kafeneioEmojiPopover', 'kafeneioChatInput')" title="Emojis">😀</button>
+              <div class="emoji-popover" id="kafeneioEmojiPopover"></div>
+            </div>
+            <input type="text" id="kafeneioChatInput" placeholder="Chat in the Kafeneio lobby..." maxlength="200" onkeydown="if(event.key==='Enter') handleSendKafeneioChat()" />
+            <button type="button" onclick="handleSendKafeneioChat()" id="kafeneioSendBtn">Send</button>
+            <button type="button" class="btn-sm" style="background:linear-gradient(135deg,#ffb300,#f57c00); color:#111; white-space:nowrap;" id="kafeneioChallengeCallBtn" onclick="postOpenChallengeInKafeneio()">⚔️ Post Open Challenge</button>
+          </div>
+        </div>
+      </div>
+
       <button class="modal-close-btn" id="liveCloseBtn" onclick="closeLiveGamesModal()">Back / Close</button>
     </div>
   </div>
@@ -1887,6 +2155,13 @@
     <div class="modal-card xl-modal">
       <h2 id="adminModalTitle">🛠️ Sotiris Admin — Global Server Database Manager</h2>
       <div id="adminFeedback" style="font-size:0.8rem; color:#00e676; font-weight:bold; margin-bottom:6px; min-height:18px;"></div>
+
+      <div class="sub-heading" id="lblAdminBannerHeading">📢 Admin Broadcast Banner (Main Menu Top Announcement)</div>
+      <div style="display:grid; grid-template-columns: 1fr auto auto; gap:6px; align-items:center; margin-bottom:10px;">
+        <input type="text" id="adminBroadcastInput" placeholder="e.g. Weekend Tournament starts Friday at 8 PM! or Updated to Version 26!" maxlength="220" style="text-align:left; font-size:0.82rem;" onkeydown="if(event.key==='Enter') adminSaveBroadcastBanner()" />
+        <button class="btn-sm" style="padding:8px 12px; background:var(--accent); color:#111;" id="btnAdminPostBanner" onclick="adminSaveBroadcastBanner()">📢 Post Banner</button>
+        <button class="btn-sm" style="padding:8px 12px; background:#e53935; color:#fff;" id="btnAdminClearBanner" onclick="adminClearBroadcastBanner()">✕ Clear Banner</button>
+      </div>
       <div id="adminTableContainer"></div>
       <div id="adminOpponentsEditor" style="display:none; background:rgba(0,0,0,0.35); border:1px solid var(--accent); border-radius:8px; padding:10px; margin-top:8px;"></div>
 
@@ -2058,7 +2333,7 @@
   </div>
 
   <!-- Small Version Label at Bottom-Right -->
-  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v25</div>
+  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v26</div>
 
   <script src="i18n.js"></script>
   <script src="tutorial.js"></script>

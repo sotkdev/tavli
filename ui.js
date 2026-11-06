@@ -1,4 +1,4 @@
-// e-Tavli — UI, Auth, Modals, Active Game Banner, Turn Timer Selector, ELO, Online Presence, Challenges, Emoji Pickers & Board Renderer (ui.js — v25)
+// e-Tavli — UI, Auth, Modals, Active Game Banner, Turn Timer Selector, ELO, Online Presence, Challenges, Emoji Pickers & Board Renderer (ui.js — v26)
 
 function t() {
   return I18N[myLang] || I18N.en;
@@ -159,13 +159,34 @@ function selectPrivateRoomPref(isPriv) {
   if (privEl) privEl.classList.toggle("active", myPrivateRoomPref);
 }
 
-function toggleMobileBoardRotation() {
-  isMobileBoardFlipped = !isMobileBoardFlipped;
+function applyHorizontalMobileModeToDOM() {
+  const b = document.body;
+  const gameApp = document.getElementById("gameAppLayout");
+  if (b) {
+    b.classList.toggle("mobile-horizontal-mode", Boolean(isMobileHorizontalMode));
+  }
   const btn = document.getElementById("rotateBoardBtn");
   if (btn) {
-    btn.style.background = isMobileBoardFlipped ? "var(--accent)" : "#5c6bc0";
-    btn.style.color = isMobileBoardFlipped ? "#111" : "#fff";
+    btn.style.background = isMobileHorizontalMode ? "var(--accent)" : "#5c6bc0";
+    btn.style.color = isMobileHorizontalMode ? "#111" : "#fff";
   }
+  if (gameApp && gameApp.classList.contains("active-game")) {
+    gameApp.style.display = (window.innerWidth >= 960 || isMobileHorizontalMode) ? "grid" : "flex";
+  }
+  if (typeof syncTutorialPanelPlacement === "function") {
+    syncTutorialPanelPlacement();
+  }
+}
+
+function toggleMobileBoardRotation() {
+  isMobileHorizontalMode = !isMobileHorizontalMode;
+  localStorage.setItem("tavli_v26_horiz_mode", isMobileHorizontalMode ? "1" : "0");
+  // Attempt native screen orientation lock when supported on mobile fullscreen/PWA
+  if (screen && screen.orientation && typeof screen.orientation.lock === "function") {
+    const targetOrientation = isMobileHorizontalMode ? "landscape" : "portrait";
+    screen.orientation.lock(targetOrientation).catch(() => {});
+  }
+  applyHorizontalMobileModeToDOM();
   render();
 }
 
@@ -192,6 +213,26 @@ function selectTurnTimerPref(seconds) {
 // ============================================================================
 // VERSION 24: MAIN MENU ACTIVE GAME BANNER (ONLINE & BOT RESUME / RESIGN / END)
 // ============================================================================
+function renderAdminBroadcastBannerOnLanding() {
+  const bannerEl = document.getElementById("adminBroadcastBanner");
+  const textEl = document.getElementById("adminBroadcastText");
+  const editBtn = document.getElementById("btnEditBroadcastInline");
+  if (!bannerEl || !textEl) return;
+
+  const bObj = window.TavliDB && typeof window.TavliDB.getBroadcastBanner === "function"
+    ? window.TavliDB.getBroadcastBanner()
+    : null;
+  const isAdmin = isAuthenticatedAccount && window.TavliDB && window.TavliDB.isAdminName(myPlayerName);
+
+  if (bObj && bObj.text) {
+    textEl.textContent = bObj.text;
+    bannerEl.style.display = "flex";
+    if (editBtn) editBtn.style.display = isAdmin ? "inline-block" : "none";
+  } else {
+    bannerEl.style.display = "none";
+  }
+}
+
 function renderActiveGameBannerOnLanding() {
   const banner = document.getElementById("activeGameResumeBanner");
   const titleEl = document.getElementById("activeGameBannerTitle");
@@ -413,7 +454,7 @@ function syncTutorialPanelPlacement() {
   }
 
   tutPanel.style.display = "flex";
-  if (window.innerWidth >= 960) {
+  if (window.innerWidth >= 960 || isMobileHorizontalMode) {
     if (tutPanel.parentElement !== sideCol) {
       if (adminBtn && adminBtn.parentElement === sideCol) {
         sideCol.insertBefore(tutPanel, adminBtn);
@@ -438,7 +479,8 @@ function showScreen(screenName) {
   if (screenName === "GAME") {
     landing.style.display = "none";
     gameApp.classList.add("active-game");
-    gameApp.style.display = window.innerWidth >= 960 ? "grid" : "flex";
+    applyHorizontalMobileModeToDOM();
+    gameApp.style.display = (window.innerWidth >= 960 || isMobileHorizontalMode) ? "grid" : "flex";
     document.body.classList.add("in-game-mode");
     syncTutorialPanelPlacement();
     updateUnreadMessageBadges();
@@ -454,6 +496,7 @@ function showScreen(screenName) {
     landing.style.display = "flex";
     checkPersistentLoginSession();
     updateUnreadMessageBadges();
+    renderAdminBroadcastBannerOnLanding();
     renderActiveGameBannerOnLanding();
     if (typeof broadcastMyPresenceHeartbeat === "function") {
       broadcastMyPresenceHeartbeat();
@@ -464,7 +507,7 @@ function showScreen(screenName) {
 window.addEventListener("resize", () => {
   const gameApp = document.getElementById("gameAppLayout");
   if (gameApp && gameApp.classList.contains("active-game")) {
-    gameApp.style.display = window.innerWidth >= 960 ? "grid" : "flex";
+    gameApp.style.display = (window.innerWidth >= 960 || isMobileHorizontalMode) ? "grid" : "flex";
     syncTutorialPanelPlacement();
   }
 });
@@ -785,6 +828,18 @@ function applyLanguageToUI() {
   setTxt("roomRosterCloseBtn", tr.closeBtn);
   setTxt("roomPeopleBtn", tr.btnRoomPeople);
   setTxt("rotateBoardBtn", tr.btnRotateBoard);
+  setTxt("lblLiveTabRooms", tr.liveTabRooms);
+  setTxt("lblLiveTabKafeneio", tr.liveTabKafeneio);
+  setTxt("kafeneioHeaderNote", tr.kafeneioHeaderNote);
+  setTxt("kafeneioSendBtn", tr.sendBtn);
+  setTxt("kafeneioChallengeCallBtn", tr.kafeneioPostChallengeBtn);
+  setTxt("lblAdminBannerHeading", tr.adminBannerHeading);
+  setTxt("btnAdminPostBanner", tr.adminBannerPostBtn);
+  setTxt("btnAdminClearBanner", tr.adminBannerClearBtn);
+  const kafInput = document.getElementById("kafeneioChatInput");
+  if (kafInput && tr.kafeneioInputPh) kafInput.placeholder = tr.kafeneioInputPh;
+  const admBannerInput = document.getElementById("adminBroadcastInput");
+  if (admBannerInput && tr.adminBannerPlaceholder) admBannerInput.placeholder = tr.adminBannerPlaceholder;
   const frSearchEl = document.getElementById("friendsSearchInput");
   if (frSearchEl && tr.friendsSearchPh) frSearchEl.placeholder = tr.friendsSearchPh;
   const specMuteBtn = document.getElementById("specChatMuteBtn");
@@ -894,6 +949,8 @@ function applyLanguageToUI() {
   handleNameInputCheck();
   renderColorPicker();
   applyV21SettingsToDOM();
+  applyHorizontalMobileModeToDOM();
+  renderAdminBroadcastBannerOnLanding();
   renderActiveGameBannerOnLanding();
   updateHeaderLabels();
   render();
@@ -1114,9 +1171,84 @@ function renderProfileModalContent(targetNameOverride = null) {
          <button class="btn-sm" style="background:#00897b; color:#fff; padding:6px 11px;" onclick="closeProfileModal(); openMessagesModal();">💬 ${escapeHtml(tr.btnMessages)}</button>
        </div>`;
 
+  // Version 26: Achievement Badges (Τρόπαια)
+  const badgesList = window.TavliDB.getPlayerBadgesList ? window.TavliDB.getPlayerBadgesList(user.name) : [];
+  let badgesHtml = `<div class="trophy-badges-grid">`;
+  badgesList.forEach(b => {
+    const bName = tr[b.nameKey] || b.id;
+    const bDesc = tr[b.descKey] || "";
+    const stateCls = b.unlocked ? "unlocked" : "locked";
+    badgesHtml += `
+      <div class="trophy-badge-card ${stateCls}" title="${escapeHtml(bDesc)}">
+        <div class="trophy-badge-icon">${b.icon}</div>
+        <div class="trophy-badge-info">
+          <div class="trophy-badge-title">${escapeHtml(bName)} ${b.unlocked ? "✅" : "🔒"}</div>
+          <div class="trophy-badge-desc">${escapeHtml(bDesc)}</div>
+        </div>
+      </div>
+    `;
+  });
+  badgesHtml += `</div>`;
+
+  // Version 26: ELO Sparkline & Last 10 Completed Matches Log
+  const eloHist = (Array.isArray(s.eloHistory) && s.eloHistory.length > 0) ? s.eloHistory.slice(-12) : [eloRating];
+  const sparkPts = eloHist.length === 1 ? [eloHist[0], eloHist[0]] : eloHist;
+  const minElo = Math.min(...sparkPts) - 10;
+  const maxElo = Math.max(...sparkPts) + 10;
+  const rangeElo = Math.max(20, maxElo - minElo);
+  const svgW = 240;
+  const svgH = 46;
+  const polyCoords = sparkPts.map((val, idx) => {
+    const x = Math.round((idx / (sparkPts.length - 1)) * (svgW - 16) + 8);
+    const y = Math.round(svgH - 8 - ((val - minElo) / rangeElo) * (svgH - 16));
+    return `${x},${y}`;
+  }).join(" ");
+  const lastVal = sparkPts[sparkPts.length - 1];
+  const firstVal = sparkPts[0];
+  const netTrend = lastVal - firstVal;
+  const trendColor = netTrend >= 0 ? "#00e676" : "#ff5252";
+  const trendSign = netTrend >= 0 ? `+${netTrend}` : `${netTrend}`;
+
+  const sparklineHtml = `
+    <div class="elo-sparkline-box">
+      <div>
+        <div style="font-size:0.78rem; color:#ffecb3; font-weight:800;">${escapeHtml(tr.profElo || "ELO Rating")}: <span style="color:#ffd54f; font-size:0.95rem;">${eloRating}</span></div>
+        <div style="font-size:0.68rem; color:${trendColor}; font-weight:700;">Trend (${sparkPts.length} pts): ${trendSign} ELO</div>
+      </div>
+      <svg width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}" style="background:rgba(0,0,0,0.28); border-radius:6px; border:1px solid rgba(255,255,255,0.1);">
+        <polyline fill="none" stroke="${trendColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${polyCoords}" />
+      </svg>
+    </div>
+  `;
+
+  const recentSets = Array.isArray(s.recentSets) ? [...s.recentSets].reverse().slice(0, 10) : [];
+  let recentMatchRowsHtml = "";
+  if (recentSets.length === 0) {
+    recentMatchRowsHtml = `<tr><td colspan="4" style="text-align:center; color:#90a4ae;">${escapeHtml(tr.profNoMatchHistory || "No completed human sets recorded yet.")}</td></tr>`;
+  } else {
+    recentSets.forEach(m => {
+      const oppName = m.opponent || "Opponent";
+      const safeOppJs = escapeJsStr(oppName);
+      const deltaNum = parseInt(m.eloDelta, 10) || 0;
+      const deltaStr = deltaNum >= 0 ? `+${deltaNum}` : `${deltaNum}`;
+      const deltaClr = deltaNum >= 0 ? "#00e676" : "#ff8a80";
+      const resBadge = m.won
+        ? `<span style="color:#00e676; font-weight:800;">W</span>`
+        : `<span style="color:#ff8a80; font-weight:800;">L</span>`;
+      recentMatchRowsHtml += `
+        <tr>
+          <td><span class="player-link" onclick="openPlayerProfileFromLink('${safeOppJs}')">👤 ${escapeHtml(oppName)}</span></td>
+          <td>${resBadge} (${m.myScore || 0} - ${m.oppScore || 0})</td>
+          <td style="color:${deltaClr}; font-weight:800;">${deltaStr} ELO</td>
+          <td style="font-size:0.7rem; color:#b0bec5;">${escapeHtml(formatMessageTime(m.ts))}</td>
+        </tr>
+      `;
+    });
+  }
+
   container.innerHTML = `
     <div class="profile-name-header">
-      <span>${dotHtml}👤 ${escapeHtml(user.name)}${streakHtml}${swordHtml} <span style="font-size:0.88rem; color:#ffe082; margin-left:6px;">(⭐ ${eloRating} ELO)</span></span>
+      <span>${dotHtml}👤 ${escapeHtml(user.name)}${streakHtml}${swordHtml} <span style="font-size:0.88rem; color:#ffe082; margin-left:6px;">(${eloRating} ELO)</span></span>
       ${headerActionsHtml}
     </div>
 
@@ -1126,7 +1258,7 @@ function renderProfileModalContent(targetNameOverride = null) {
         <div class="lbl">${tr.profRank}</div>
       </div>
       <div class="stat-box">
-        <div class="val" style="color:#ffd54f;">⭐ ${eloRating}</div>
+        <div class="val" style="color:#ffd54f;">${eloRating}</div>
         <div class="lbl">${tr.profElo || "ELO Rating"}</div>
       </div>
       <div class="stat-box">
@@ -1138,6 +1270,23 @@ function renderProfileModalContent(targetNameOverride = null) {
         <div class="lbl">${tr.profGames}</div>
       </div>
     </div>
+
+    <div class="sub-heading">${escapeHtml(tr.profTrophiesHeading || "🏆 Trophies & Achievements (Τρόπαια)")}</div>
+    ${badgesHtml}
+
+    <div class="sub-heading">${escapeHtml(tr.profSparklineHeading || "📈 ELO Rating Trend & Last 10 Completed Sets")}</div>
+    ${sparklineHtml}
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>${tr.colOpponent}</th>
+          <th>${escapeHtml(tr.colScore || "Score")}</th>
+          <th>${escapeHtml(tr.colEloDelta || "ELO Δ")}</th>
+          <th>${escapeHtml(tr.colDate || "Date")}</th>
+        </tr>
+      </thead>
+      <tbody>${recentMatchRowsHtml}</tbody>
+    </table>
 
     <div class="sub-heading">${tr.profVariantHeading}</div>
     <div class="stat-grid">
@@ -1209,7 +1358,88 @@ function selectMessageThread(partnerName) {
 }
 
 // --- Live Games Lobby Modal Functions ---
-async function openLiveGamesModal() {
+function switchLiveLobbyTab(tabName) {
+  activeLiveLobbyTab = (tabName === "KAFENEIO") ? "KAFENEIO" : "ROOMS";
+  const btnRooms = document.getElementById("btnLiveTabRooms");
+  const btnKaf = document.getElementById("btnLiveTabKafeneio");
+  const paneRooms = document.getElementById("liveRoomsTabPane");
+  const paneKaf = document.getElementById("kafeneioChatTabPane");
+
+  if (btnRooms) btnRooms.classList.toggle("active", activeLiveLobbyTab === "ROOMS");
+  if (btnKaf) btnKaf.classList.toggle("active", activeLiveLobbyTab === "KAFENEIO");
+  if (paneRooms) paneRooms.style.display = activeLiveLobbyTab === "ROOMS" ? "block" : "none";
+  if (paneKaf) paneKaf.style.display = activeLiveLobbyTab === "KAFENEIO" ? "block" : "none";
+
+  if (activeLiveLobbyTab === "KAFENEIO") {
+    renderKafeneioLobbyChatContent();
+  } else {
+    renderLiveGamesModalContent();
+  }
+}
+
+function renderKafeneioLobbyChatContent() {
+  const box = document.getElementById("kafeneioMessagesBox");
+  if (!box) return;
+  const tr = t();
+  const msgs = window.TavliDB && typeof window.TavliDB.getLobbyChatMessages === "function"
+    ? window.TavliDB.getLobbyChatMessages()
+    : [];
+
+  if (msgs.length === 0) {
+    box.innerHTML = `<div style="margin:auto; text-align:center; color:#90a4ae; font-size:0.82rem; padding:16px;">${escapeHtml(tr.kafeneioEmptyMsg || "No messages in the Kafeneio yet.")}</div>`;
+    return;
+  }
+
+  let html = "";
+  msgs.forEach(m => {
+    const sender = m.sender || "Player";
+    const safeJs = escapeJsStr(sender);
+    const dotHtml = renderPresenceDotOnlyHtml(sender);
+    const streakHtml = renderWinStreakBadgeHtml(sender);
+    const swordHtml = renderSwordChallengeBtnHtml(sender, true);
+    html += `
+      <div class="kafeneio-msg-row">
+        <div>
+          ${dotHtml}<span class="player-link" onclick="closeLiveGamesModal(); openProfileModal('${safeJs}')">${escapeHtml(sender)}</span>${streakHtml}${swordHtml}:
+          <span style="color:#eceff1; margin-left:4px;">${escapeHtml(m.text)}</span>
+        </div>
+        <span style="font-size:0.65rem; color:#90a4ae; white-space:nowrap;">${escapeHtml(formatMessageTime(m.ts))}</span>
+      </div>
+    `;
+  });
+  box.innerHTML = html;
+  box.scrollTop = box.scrollHeight;
+}
+
+async function handleSendKafeneioChat() {
+  const input = document.getElementById("kafeneioChatInput");
+  if (!input) return;
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  const senderName = myPlayerName || (document.getElementById("playerNameInput")?.value.trim()) || t().defaultPlayer;
+  const res = await window.TavliDB.sendLobbyChatMessageAsync(senderName, text);
+  if (res && res.ok) {
+    playChatSound();
+    renderKafeneioLobbyChatContent();
+  }
+}
+
+async function postOpenChallengeInKafeneio() {
+  const tr = t();
+  const senderName = myPlayerName || (document.getElementById("playerNameInput")?.value.trim()) || tr.defaultPlayer;
+  const modeLabel = myGameModePref === "FULL" ? tr.modeFull : (tr.variants[myGameModePref] || myGameModePref);
+  const text = tr.kafeneioOpenChallengeText
+    ? tr.kafeneioOpenChallengeText(senderName, modeLabel, myTargetScorePref || 7)
+    : `⚔️ I'm looking for a match (${modeLabel} • Target: ${myTargetScorePref || 7})!`;
+  const res = await window.TavliDB.sendLobbyChatMessageAsync(senderName, text);
+  if (res && res.ok) {
+    playChatSound();
+    renderKafeneioLobbyChatContent();
+  }
+}
+
+async function openLiveGamesModal(defaultTab = "ROOMS") {
   if (!isAuthenticatedAccount && myStoreDetailsPref) {
     const ok = await verifyIdentityOnLanding(false);
     if (!ok) return;
@@ -1217,12 +1447,13 @@ async function openLiveGamesModal() {
   const tr = t();
   const statusEl = document.getElementById("liveSyncStatus");
   if (statusEl && tr.liveSyncing) statusEl.textContent = tr.liveSyncing;
-  renderLiveGamesModalContent();
+  switchLiveLobbyTab(defaultTab);
   document.getElementById("liveGamesModal").style.display = "flex";
 
   await window.TavliDB.pullFromServer();
   if (statusEl && tr.liveSynced) statusEl.textContent = tr.liveSynced;
   renderLiveGamesModalContent();
+  renderKafeneioLobbyChatContent();
 }
 
 function closeLiveGamesModal() {
@@ -1236,6 +1467,7 @@ async function refreshLiveGamesLobby() {
   await window.TavliDB.pullFromServer();
   if (statusEl && tr.liveSynced) statusEl.textContent = tr.liveSynced;
   renderLiveGamesModalContent();
+  renderKafeneioLobbyChatContent();
 }
 
 function renderLiveGamesModalContent() {
@@ -1758,7 +1990,7 @@ function renderFriendsModalContent() {
       <div class="roster-item-row">
         <div>
           ${dotHtml}<span class="player-link" onclick="closeFriendsModal(); openProfileModal('${safeJs}')">👤 ${escapeHtml(fr.name)}</span>${streakHtml}${swordHtml}
-          <span style="font-size:0.75rem; color:#ffd54f; margin-left:6px;">⭐ ${fr.elo}</span>
+          <span style="font-size:0.75rem; color:#ffd54f; margin-left:6px;">${fr.elo} ELO</span>
           <div style="font-size:0.7rem; color:#b0bec5; margin-top:2px;">${escapeHtml(statusLbl)}</div>
         </div>
         <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
@@ -1873,12 +2105,11 @@ function renderLeaderboardModalContent() {
     const dotHtml = renderPresenceDotOnlyHtml(item.name);
     const streakHtml = renderWinStreakBadgeHtml(item.name);
     const swordRightHtml = renderSwordChallengeBtnHtml(item.name, true);
-    const friendBtnHtml = renderAddFriendToggleBtnHtml(item.name);
     rowsHtml += `
       <tr style="${rowStyle}">
         <td>#${item.rank}</td>
-        <td>${dotHtml}<span class="player-link" onclick="openPlayerProfileFromLink('${safeNameJs}')">👤 ${escapeHtml(item.name)}</span>${streakHtml}${swordRightHtml}${friendBtnHtml}</td>
-        <td style="color:#ffd54f; font-weight:800;">⭐ ${item.elo}</td>
+        <td>${dotHtml}<span class="player-link" onclick="openPlayerProfileFromLink('${safeNameJs}')">👤 ${escapeHtml(item.name)}</span>${streakHtml}${swordRightHtml}</td>
+        <td style="color:#ffd54f; font-weight:800;">${item.elo}</td>
         <td>${item.setsWon} / ${item.setsPlayed}</td>
         <td>${item.gamesWon} / ${item.gamesPlayed}</td>
         <td style="color:var(--accent); font-weight:bold;">${Math.round(item.overallWinRate)}%</td>
@@ -1919,11 +2150,39 @@ async function openAdminModal() {
   document.getElementById("adminOpponentsEditor").style.display = "none";
   document.getElementById("adminFeedback").textContent = "Syncing with server...";
   document.getElementById("adminCloudUrlInput").value = window.TavliDB.getCloudUrl();
+  const bInput = document.getElementById("adminBroadcastInput");
+  const curBanner = window.TavliDB.getBroadcastBanner ? window.TavliDB.getBroadcastBanner() : null;
+  if (bInput) bInput.value = curBanner ? curBanner.text : "";
   renderAdminTable();
   document.getElementById("adminModal").style.display = "flex";
   await window.TavliDB.pullFromServer();
+  const freshBanner = window.TavliDB.getBroadcastBanner ? window.TavliDB.getBroadcastBanner() : null;
+  if (bInput) bInput.value = freshBanner ? freshBanner.text : "";
   document.getElementById("adminFeedback").textContent = "🌐 Server database synced (PINs SHA-256 hashed).";
   renderAdminTable();
+}
+
+async function adminSaveBroadcastBanner() {
+  if (!isAuthenticatedAccount || !window.TavliDB.isAdminName(myPlayerName)) return;
+  const bInput = document.getElementById("adminBroadcastInput");
+  const text = bInput ? bInput.value.trim() : "";
+  const fb = document.getElementById("adminFeedback");
+  const res = await window.TavliDB.setBroadcastBannerAsync(myPlayerName, text);
+  if (res && res.ok) {
+    if (fb) {
+      fb.style.color = "#00e676";
+      fb.textContent = t().adminBannerSavedMsg || "Broadcast banner updated on the Main Menu!";
+    }
+    renderAdminBroadcastBannerOnLanding();
+    if (typeof syncDatabaseWithPeer === "function") syncDatabaseWithPeer();
+  }
+}
+
+async function adminClearBroadcastBanner() {
+  if (!isAuthenticatedAccount || !window.TavliDB.isAdminName(myPlayerName)) return;
+  const bInput = document.getElementById("adminBroadcastInput");
+  if (bInput) bInput.value = "";
+  await adminSaveBroadcastBanner();
 }
 function closeAdminModal() {
   document.getElementById("adminModal").style.display = "none";

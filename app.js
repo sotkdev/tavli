@@ -1,4 +1,4 @@
-// e-Tavli — Core Game Engine, Fevga Rules, AI, Turn Timers, 3-Strike Inactivity Forfeit, Main-Menu Resume/Resign, Doubles Stats, Online Presence, Direct Challenges & WebRTC/Cloud Multiplayer (app.js — v25)
+// e-Tavli — Core Game Engine, Fevga Rules, AI, Turn Timers, 3-Strike Inactivity Forfeit, Main-Menu Resume/Resign, Doubles Stats, Online Presence, Direct Challenges & WebRTC/Cloud Multiplayer (app.js — v26)
 
 const PEER_CONFIG = {
   pingInterval: 5000,
@@ -747,7 +747,12 @@ function forfeitCurrentGameAndSet(loserRole, reasonText) {
       nameB: playerNames.B,
       variant: playedVariant,
       matchOver: true,
-      forfeitSetOnly: false
+      forfeitSetOnly: false,
+      manaWin: false,
+      scoreW: state.scoreW,
+      scoreB: state.scoreB,
+      targetScore: target,
+      gamesLog: cloneState(state.setGamesLog || [])
     };
     state.lastWinEvent = winEv;
     recordWinEventToDatabase(winEv);
@@ -1243,7 +1248,14 @@ function recordWinEventToDatabase(winEv) {
     nameB: bName,
     variant: winEv.variant,
     matchOver: Boolean(winEv.matchOver),
-    forfeitSetOnly: Boolean(winEv.forfeitSetOnly)
+    forfeitSetOnly: Boolean(winEv.forfeitSetOnly),
+    manaWin: Boolean(winEv.manaWin),
+    comebackKing: Boolean(winEv.comebackKing),
+    diplomatCount: parseInt(winEv.diplomatCount, 10) || 0,
+    scoreW: parseInt(winEv.scoreW, 10) || state.scoreW || 0,
+    scoreB: parseInt(winEv.scoreB, 10) || state.scoreB || 0,
+    targetScore: parseInt(winEv.targetScore, 10) || state.targetScore || 7,
+    gamesLog: Array.isArray(winEv.gamesLog) ? winEv.gamesLog : cloneState(state.setGamesLog || [])
   });
 
   if (recorded) {
@@ -2126,7 +2138,7 @@ function executeMoveSequence(steps, onSequenceDone = null) {
 
     if (manaWin) {
       isAutoPlayingTurn = false;
-      finishGame(player, 2, t().manaWin, { from: startOrigin, to: finalDest, player });
+      finishGame(player, 2, t().manaWin, { from: startOrigin, to: finalDest, player }, true);
       return;
     }
 
@@ -2222,7 +2234,7 @@ function handleEndTurn(forcedOrAuto = false) {
   checkTriggerAutoRollOrAI();
 }
 
-function finishGame(winner, pts, reason, winningMoveAnim = null) {
+function finishGame(winner, pts, reason, winningMoveAnim = null, isManaWin = false) {
   if (state.phase === "SET_OVER") return;
   stopTurnCountdownTimer();
   stopInactivityForfeitCountdown();
@@ -2237,11 +2249,27 @@ function finishGame(winner, pts, reason, winningMoveAnim = null) {
     gameNum: state.setGamesLog.length + 1,
     variant: playedVariant,
     winner,
-    pts
+    pts,
+    manaWin: Boolean(isManaWin)
   });
 
   const target = state.targetScore || 7;
   const isMatchOver = (state.scoreW >= target || state.scoreB >= target);
+
+  // Evaluate Diplomat (3+ Diplo wins in this set) & Comeback King (winning a 7-pt set after trailing 0-5)
+  const diplomatCount = state.setGamesLog.filter(g => g && g.winner === winner && g.pts === 2 && !g.forfeit).length;
+  let comebackKing = false;
+  if (isMatchOver && target >= 7) {
+    let runW = 0, runB = 0;
+    for (const g of state.setGamesLog) {
+      if (!g) continue;
+      const p = parseInt(g.pts, 10) || 1;
+      if (g.winner === "W") runW += p; else runB += p;
+      const mySc = winner === "W" ? runW : runB;
+      const oppSc = winner === "W" ? runB : runW;
+      if (mySc === 0 && oppSc >= 5) comebackKing = true;
+    }
+  }
 
   let winEv = null;
   if (!isAiMatch && !isTutorialMode) {
@@ -2251,7 +2279,14 @@ function finishGame(winner, pts, reason, winningMoveAnim = null) {
       nameW: playerNames.W,
       nameB: playerNames.B,
       variant: playedVariant,
-      matchOver: isMatchOver
+      matchOver: isMatchOver,
+      manaWin: Boolean(isManaWin),
+      comebackKing,
+      diplomatCount,
+      scoreW: state.scoreW,
+      scoreB: state.scoreB,
+      targetScore: target,
+      gamesLog: cloneState(state.setGamesLog)
     };
     state.lastWinEvent = winEv;
     recordWinEventToDatabase(winEv);
@@ -2535,8 +2570,8 @@ function shareSetVictoryResultCard() {
 
   const uW = window.TavliDB.getUser(playerNames.W);
   const uB = window.TavliDB.getUser(playerNames.B);
-  const eloW = (uW && uW.stats && uW.stats.elo) ? ` (⭐ ${Math.round(uW.stats.elo)} ELO)` : "";
-  const eloB = (uB && uB.stats && uB.stats.elo) ? ` (⭐ ${Math.round(uB.stats.elo)} ELO)` : "";
+  const eloW = (uW && uW.stats && uW.stats.elo) ? ` (${Math.round(uW.stats.elo)} ELO)` : "";
+  const eloB = (uB && uB.stats && uB.stats.elo) ? ` (${Math.round(uB.stats.elo)} ELO)` : "";
 
   const gameLines = allGames.map(g => {
     const wName = g.winner === "W" ? playerNames.W : playerNames.B;
@@ -3750,6 +3785,9 @@ window.addEventListener("DOMContentLoaded", () => {
     if (typeof updateUnreadMessageBadges === "function") {
       updateUnreadMessageBadges();
     }
+    if (typeof renderAdminBroadcastBannerOnLanding === "function") {
+      renderAdminBroadcastBannerOnLanding();
+    }
     if (typeof renderActiveGameBannerOnLanding === "function") {
       renderActiveGameBannerOnLanding();
     }
@@ -3757,8 +3795,9 @@ window.addEventListener("DOMContentLoaded", () => {
       renderLeaderboardModalContent();
     }
     const liveModal = document.getElementById("liveGamesModal");
-    if (liveModal && liveModal.style.display === "flex" && typeof renderLiveGamesModalContent === "function") {
-      renderLiveGamesModalContent();
+    if (liveModal && liveModal.style.display === "flex") {
+      if (typeof renderLiveGamesModalContent === "function") renderLiveGamesModalContent();
+      if (typeof renderKafeneioLobbyChatContent === "function") renderKafeneioLobbyChatContent();
     }
     if (document.getElementById("profileModal").style.display === "flex") {
       renderProfileModalContent();
@@ -3829,6 +3868,12 @@ window.addEventListener("DOMContentLoaded", () => {
 
   if (typeof applyV21SettingsToDOM === "function") {
     applyV21SettingsToDOM();
+  }
+  if (typeof applyHorizontalMobileModeToDOM === "function") {
+    applyHorizontalMobileModeToDOM();
+  }
+  if (typeof renderAdminBroadcastBannerOnLanding === "function") {
+    renderAdminBroadcastBannerOnLanding();
   }
 
   checkPersistentLoginSession();
