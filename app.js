@@ -1,4 +1,4 @@
-// e-Tavli — Core Game Engine, Fevga Rules, AI, Turn Timers, 3-Strike Inactivity Forfeit, Main-Menu Resume/Resign, Doubles Stats, Online Presence, Direct Challenges & WebRTC/Cloud Multiplayer (app.js — v26)
+// e-Tavli — Core Game Engine, Fevga Rules, AI, Turn Timers, 3-Strike Inactivity Forfeit, Main-Menu Resume/Resign, Doubles Stats, Online Presence, Direct Challenges & WebRTC/Cloud Multiplayer (app.js — v27)
 
 const PEER_CONFIG = {
   pingInterval: 5000,
@@ -169,6 +169,7 @@ document.addEventListener("visibilitychange", () => {
 
 let packetQueue = [];
 let isProcessingPacket = false;
+let recentChatMsgIds = new Set();
 
 function getActiveAnimTiming() {
   if (typeof ANIM_SPEED_CONFIG !== "undefined" && ANIM_SPEED_CONFIG[myAnimSpeed]) {
@@ -471,15 +472,26 @@ async function respondToIncomingChallenge(accepted) {
     return;
   }
 
+  // Notify the Challenger (Host) that Player 2 accepted the challenge and is selecting their checker colour
+  if (window.TavliDB.pushRoomSignalPacket && ch.roomCode) {
+    window.TavliDB.pushRoomSignalPacket(ch.roomCode, "TO_HOST", {
+      type: "CHALLENGE_ACCEPTED_SELECTING",
+      from: myPlayerName
+    });
+  }
+
   closeLeaderboardModal();
   closeProfileModal();
   closeMessagesModal();
   closeLiveGamesModal();
-  closePlayConfigModal();
+  closeFriendsModal();
+  closeRoomRosterModal();
 
-  pendingRoomFromUrl = null;
-  showScreen("GAME");
-  joinRoomWithCode(ch.roomCode, false);
+  // Open the Join setup modal with the challenge room code pre-filled so Player 2 can pick their checker colour
+  pendingRoomFromUrl = ch.roomCode;
+  const roomInput = document.getElementById("modalRoomInput");
+  if (roomInput) roomInput.value = ch.roomCode;
+  openPlaySetupModal("JOIN", ch.roomCode);
 }
 
 // ============================================================================
@@ -2733,10 +2745,14 @@ function safeSend(targetConn, payload) {
 
 function broadcastFromHostToAll(packet, excludeConn = null) {
   if (myRole !== "W") return;
-  if (conn && conn.open && conn !== excludeConn) {
-    try { conn.send(packet); } catch (_) {}
-  } else if (isCloudRelayConnected && activeRoomCode && window.TavliDB && typeof window.TavliDB.pushRoomSignalPacket === "function") {
-    window.TavliDB.pushRoomSignalPacket(activeRoomCode, "TO_CLIENT", packet);
+  // Never echo Player B's own CHAT or TYPING packet back to Player B
+  const isFromPlayerB = Boolean(packet && (packet.type === "CHAT" || packet.type === "TYPING") && packet.role === "B");
+  if (!isFromPlayerB) {
+    if (conn && conn.open && conn !== excludeConn) {
+      try { conn.send(packet); } catch (_) {}
+    } else if (isCloudRelayConnected && activeRoomCode && window.TavliDB && typeof window.TavliDB.pushRoomSignalPacket === "function") {
+      window.TavliDB.pushRoomSignalPacket(activeRoomCode, "TO_CLIENT", packet);
+    }
   }
   spectatorConns = spectatorConns.filter(sc => sc && sc.open);
   spectatorConns.forEach(sc => {
@@ -3082,6 +3098,21 @@ function handleHostIncomingPacket(packet, incomingConn, code) {
       ? tr.challengeDeclinedChat(packet.from || "Player")
       : `✕ ${packet.from || "Player"} declined your challenge.`;
     appendChatLine(tr.sysLabel, msg, "SYS");
+    return;
+  }
+
+  if (packet.type === "CHALLENGE_ACCEPTED_SELECTING") {
+    const tr = t();
+    const fromName = packet.from || "Player 2";
+    const chatMsg = tr.challengeAcceptedSelectingChat
+      ? tr.challengeAcceptedSelectingChat(fromName)
+      : `✅ ${fromName} accepted your challenge and is selecting their checker colour...`;
+    const bannerMsg = tr.challengeAcceptedSelectingBanner
+      ? tr.challengeAcceptedSelectingBanner(fromName, code)
+      : `Room: ${code} (${fromName} accepted — selecting checker colour...)`;
+    document.getElementById("netStatus").textContent = bannerMsg;
+    appendChatLine(tr.sysLabel, chatMsg, "SYS");
+    playTurnChime();
     return;
   }
 
@@ -3508,9 +3539,21 @@ function handleCommonPacketOnPeer(packet, sourceConn) {
   }
 
   if (packet.type === "CHAT") {
+    if (packet.id) {
+      if (recentChatMsgIds.has(packet.id)) return;
+      recentChatMsgIds.add(packet.id);
+      if (recentChatMsgIds.size > 300) {
+        const firstId = recentChatMsgIds.values().next().value;
+        recentChatMsgIds.delete(firstId);
+      }
+    }
     const sender = String(packet.sender || "Friend").slice(0, 16);
     const text = String(packet.text || "").slice(0, 140);
     const senderRole = packet.role === "SPECTATOR" ? "SPECTATOR" : (packet.role === "W" ? "W" : "B");
+    // Ignore echoed chat from our own player role
+    if ((myRole === "W" || myRole === "B") && senderRole === myRole && window.TavliDB.normalizeKey(sender) === window.TavliDB.normalizeKey(myPlayerName)) {
+      return;
+    }
     if (senderRole === "SPECTATOR" && (isSpectatorChatMuted || state.spectatorChatMuted)) {
       return;
     }
@@ -3694,7 +3737,8 @@ function syncState() {
 
 function handleChatTyping() {
   const val = document.getElementById("chatInput").value.trim();
-  const pkt = { type: "TYPING", isTyping: val.length > 0, sender: myPlayerName };
+  const myChatRole = myRole === "SPECTATOR" ? "SPECTATOR" : (myRole === "B" ? "B" : "W");
+  const pkt = { type: "TYPING", isTyping: val.length > 0, sender: myPlayerName, role: myChatRole };
   if (myRole === "W") {
     broadcastFromHostToAll(pkt);
   } else if (conn && conn.open) {
@@ -3702,7 +3746,7 @@ function handleChatTyping() {
   }
   if (localTypingTimeout) clearTimeout(localTypingTimeout);
   localTypingTimeout = setTimeout(() => {
-    const stopPkt = { type: "TYPING", isTyping: false, sender: myPlayerName };
+    const stopPkt = { type: "TYPING", isTyping: false, sender: myPlayerName, role: myChatRole };
     if (myRole === "W") broadcastFromHostToAll(stopPkt);
     else if (conn && conn.open) conn.send(stopPkt);
   }, 1800);
@@ -3721,10 +3765,13 @@ function sendChat() {
   if (localTypingTimeout) clearTimeout(localTypingTimeout);
 
   const myChatRole = myRole === "SPECTATOR" ? "SPECTATOR" : (myRole === "B" ? "B" : "W");
+  const msgId = "CHAT-" + Date.now() + "-" + Math.floor(Math.random() * 1000000);
+  recentChatMsgIds.add(msgId);
+
   appendChatLine(myPlayerName, text, myChatRole);
 
-  const stopPkt = { type: "TYPING", isTyping: false, sender: myPlayerName };
-  const chatPkt = { type: "CHAT", sender: myPlayerName, role: myChatRole, text };
+  const stopPkt = { type: "TYPING", isTyping: false, sender: myPlayerName, role: myChatRole };
+  const chatPkt = { type: "CHAT", id: msgId, sender: myPlayerName, role: myChatRole, text };
 
   if (myRole === "W") {
     broadcastFromHostToAll(stopPkt);

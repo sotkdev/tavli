@@ -1,4 +1,4 @@
-// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, ELO Rating, Online Presence, Direct Challenges, Live Rooms & Global Messaging (database.js — v26)
+// e-Tavli — Global Firebase Realtime Database Engine with Salted SHA-256 PIN Hashing, ELO Rating, Online Presence, Direct Challenges, Live Rooms & Global Messaging (database.js — v27)
 // Always points to: https://greek-tavli-online-default-rtdb.europe-west1.firebasedatabase.app/tavli_db.json
 
 const TAVLI_DB_STORAGE_KEY = "tavli_players_database_v1";

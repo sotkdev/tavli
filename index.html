@@ -1156,9 +1156,37 @@
     .btn-primary-start { background: var(--accent); color: #111; }
     .btn-back-cancel { background: #546e7a; color: #fff; }
 
-    /* Profile, Leaderboard, Messages & Settings Top Buttons Above Chat */
-    .side-top-btns { display: flex; gap: 4px; width: 100%; flex-shrink: 0; }
-    .side-top-btns button { flex: 1; padding: 7px 4px; border-radius: 8px; border: 1px solid var(--wood-mid); background: var(--wood-dark); color: #ffecb3; font-weight: bold; font-size: 0.71rem; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 3px; box-shadow: 0 2px 6px rgba(0,0,0,0.4); white-space: nowrap; }
+    /* Profile, Friends, Leaderboard, Messages & Settings Top Buttons Above Chat (2-Row Grid in v27) */
+    .side-top-btns {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 5px;
+      width: 100%;
+      flex-shrink: 0;
+    }
+    .side-top-btns button {
+      grid-column: span 2;
+      padding: 7px 6px;
+      border-radius: 8px;
+      border: 1px solid var(--wood-mid);
+      background: var(--wood-dark);
+      color: #ffecb3;
+      font-weight: bold;
+      font-size: 0.74rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .side-top-btns button:nth-child(4),
+    .side-top-btns button:nth-child(5) {
+      grid-column: span 3;
+    }
     .side-top-btns button:hover { filter: brightness(1.15); border-color: var(--accent); }
 
     /* Global Messaging Modal Layout */
@@ -2246,7 +2274,7 @@
         <div class="score-box">
           <span id="colorLabelW">White</span> (<span id="nameW">Player 1</span>)<span id="streakBadgeW"></span><br>
           <span class="score-num" id="scoreW">0</span> / <span id="targetW">7</span><br>
-          <span class="pip-counter-badge" id="pipCountW">167 pips</span>
+          <span class="pip-counter-badge" id="pipCountW" translate="no">167 pips</span>
         </div>
         <div style="text-align:center;">
           <div class="variant-badge" id="gameTitle">PORTES</div>
@@ -2256,7 +2284,7 @@
         <div class="score-box">
           <span id="colorLabelB">Black</span> (<span id="nameB">Player 2</span>)<span id="streakBadgeB"></span><br>
           <span class="score-num" id="scoreB">0</span> / <span id="targetB">7</span><br>
-          <span class="pip-counter-badge" id="pipCountB">167 pips</span>
+          <span class="pip-counter-badge" id="pipCountB" translate="no">167 pips</span>
         </div>
       </div>
 
@@ -2333,7 +2361,7 @@
   </div>
 
   <!-- Small Version Label at Bottom-Right -->
-  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v26</div>
+  <div style="position:fixed; bottom:4px; right:8px; font-size:0.65rem; color:rgba(255,255,255,0.45); pointer-events:none; z-index:9999; font-weight:600;">v27</div>
 
   <script src="i18n.js"></script>
   <script src="tutorial.js"></script>

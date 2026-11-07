@@ -1,4 +1,4 @@
-// e-Tavli — UI, Auth, Modals, Active Game Banner, Turn Timer Selector, ELO, Online Presence, Challenges, Emoji Pickers & Board Renderer (ui.js — v26)
+// e-Tavli — UI, Auth, Modals, Active Game Banner, Turn Timer Selector, ELO, Online Presence, Challenges, Emoji Pickers & Board Renderer (ui.js — v27)
 
 function t() {
   return I18N[myLang] || I18N.en;

@@ -1,4 +1,4 @@
-// e-Tavli — Bilingual Dictionary, V21–V24 Settings State, Turn Timers, ELO, Presence, Challenges & Global Constants (i18n.js — v26)
+// e-Tavli — Bilingual Dictionary, V21–V24 Settings State, Turn Timers, ELO, Presence, Challenges & Global Constants (i18n.js — v27)
 
 let myLang = "en";
 let myTheme = "classic";
@@ -129,6 +129,8 @@ const I18N = {
     btnDeclineChallenge: "✕ Decline",
     challengeSentWaiting: target => `⚔️ Challenge sent to ${target}! Waiting for response...`,
     challengeDeclinedChat: target => `✕ ${target} declined your game challenge.`,
+    challengeAcceptedSelectingChat: target => `✅ ${target} accepted your challenge and is selecting their checker colour...`,
+    challengeAcceptedSelectingBanner: (target, code) => `Room: ${code} (${target} accepted — selecting checker colour...)`,
     // Version 25: Friends, Streak, Private Room, Share Result, Spectator Mute, Rotate, Room Roster, Alerts
     btnFriends: "Friends",
     friendsModalTitle: "👥 Friends List",
@@ -450,8 +452,8 @@ const I18N = {
     // Version 24: ELO, Doubles, Presence & Challenges (Greek)
     colElo: "ELO",
     profElo: "Βαθμολογία ELO",
-    setDoublesHeading: "Διπλές Ζαριές στο Σετ",
-    doublesCountText: count => `${count} ${count === 1 ? "Διπλή" : "Διπλές"}`,
+    setDoublesHeading: "Διπλά στο Σετ",
+    doublesCountText: count => `${count} ${count === 1 ? "Διπλό" : "Διπλά"}`,
     presenceOnlineIdle: "Online",
     presenceHosting: "Δωμάτιο",
     presencePlaying: "Παίζει",
@@ -465,6 +467,8 @@ const I18N = {
     btnDeclineChallenge: "✕ Απόρριψη",
     challengeSentWaiting: target => `⚔️ Η πρόκληση στάλθηκε στον/στην ${target}! Αναμονή απάντησης...`,
     challengeDeclinedChat: target => `✕ Ο/Η ${target} απέρριψε την πρόκληση.`,
+    challengeAcceptedSelectingChat: target => `✅ Ο/Η ${target} αποδέχθηκε την πρόκληση και επιλέγει χρώμα πουλιών...`,
+    challengeAcceptedSelectingBanner: (target, code) => `Δωμάτιο: ${code} (Ο/Η ${target} αποδέχθηκε — επιλέγει χρώμα...)`,
     // Version 25: Friends, Streak, Private Room, Share Result, Spectator Mute, Rotate, Room Roster, Alerts (Greek)
     btnFriends: "Φίλοι",
     friendsModalTitle: "👥 Λίστα Φίλων",
@@ -503,7 +507,7 @@ const I18N = {
     badge_comeback_king_name: "Βασιλιάς της Ανατροπής (Comeback King)",
     badge_comeback_king_desc: "Νίκη σε σετ 7 πόντων ενώ χάνατε με 0–5",
     badge_diplomat_name: "Διπλωμάτης (Diplomat)",
-    badge_diplomat_desc: "3 Διπλές νίκες (+2) μέσα στο ίδιο σετ",
+    badge_diplomat_desc: "3 νίκες με Διπλό (+2) μέσα στο ίδιο σετ",
     badge_first_blood_name: "Πρώτη Νίκη Σετ",
     badge_first_blood_desc: "Κερδίσατε το πρώτο σας online σετ",
     badge_hot_streak_name: "Καυτό Σερί (3+ Σετ)",
@@ -567,7 +571,7 @@ const I18N = {
     pinPlaceholder: "4-ψήφιο PIN",
     errRegisteredNeedsPin: "ΣΦΑΛΜΑ: ERR_PIN_REQUIRED — Αυτό το όνομα είναι κατοχυρωμένο. Ενεργοποιήστε την αποθήκευση και βάλτε το PIN σας.",
     fevgaWarnMsg: "⚠️ Έχετε κλείσει προσωρινά και τις 6 αρχικές θέσεις! Χρησιμοποιήστε την επόμενη κίνηση για να ξεμπλοκάρετε τουλάχιστον 1 θέση.",
-    lblCheckerColor: "Χρώμα Πούλιων",
+    lblCheckerColor: "Χρώμα Πουλιών",
     lblAiDiff: "Δυσκολία AI",
     aiEasy: "Εύκολο",
     aiMedium: "Μεσαίο",
@@ -732,7 +736,7 @@ const I18N = {
     rollOffTie: (r1, r2) => `Ισοπαλία (${r1} - ${r2})! Ρίξτε ξανά για το ποιος παίζει πρώτος.`,
     rollOffWin: (wName, r1, bName, r2, winName) => `${wName}: ${r1} - ${bName}: ${r2} — Παίζει πρώτος ο/η ${winName}!`,
     rollOffStart: (winName, auto) => `Ο/Η ${winName} κέρδισε το πρώτο ζάρι!${auto ? " Αυτόματη ρίψη..." : " Ρίξτε Ζάρια."}`,
-    rolledPair: (d1, d2, dbl) => `Ζαριά: ${d1} & ${d2}${dbl ? " (Διπλές - 4 κινήσεις!)" : ""}`,
+    rolledPair: (d1, d2, dbl) => `Ζαριά: ${d1} & ${d2}${dbl ? " (Διπλά - 4 κινήσεις!)" : ""}`,
     noLegalMoves: p => `Καμία διαθέσιμη κίνηση για ${p} — αλλάζει η σειρά!`,
     movesComplete: "Οι κινήσεις ολοκληρώθηκαν — πατήστε Τέλος Σειράς (ή Αναίρεση)",
     moveUndone: "Η κίνηση αναιρέθηκε",
